@@ -8,13 +8,16 @@ public class PlayerInfo
     public int CurrentBet { get; set; }
     public int TotalBetThisRound { get; set; } // Total bet in current betting round
     public List<CardInfo> Hand { get; set; } = [];
-    public int SeatPosition { get; set; }
+    public int SeatPosition { get; set; } = -1; // -1 means spectator
     public PlayerStatus Status { get; set; } = PlayerStatus.Waiting;
     public bool IsReady { get; set; }
     public bool HasActedThisRound { get; set; } // For poker betting rounds
     public bool IsFolded { get; set; }
     public bool IsAllIn { get; set; }
     public string? HandDescription { get; set; } // Description of poker hand
+    public bool IsSpectator { get; set; } // True if watching, not playing
+    public bool ShowCards { get; set; } = true; // Whether to show cards at showdown (muck = false)
+    public DateTime? TurnStartTime { get; set; } // When player's turn started (for timer)
 }
 
 public class CardInfo
@@ -41,6 +44,7 @@ public class GameRoom
     public GameMode Mode { get; set; } = GameMode.Blackjack;
     public GamePhase Phase { get; set; } = GamePhase.WaitingForPlayers;
     public List<PlayerInfo> Players { get; set; } = [];
+    public List<PlayerInfo> Spectators { get; set; } = []; // Observers watching the game
     public PlayerInfo? Dealer { get; set; }
     public List<CardInfo> DealerHand { get; set; } = [];
     public List<CardInfo> CommunityCards { get; set; } = []; // For Poker
@@ -55,6 +59,8 @@ public class GameRoom
     public int SmallBlindAmount { get; set; } = 5;
     public int BigBlindAmount { get; set; } = 10;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public int TurnTimeoutSeconds { get; set; } = 30; // Time limit for each turn
+    public DateTime? CurrentTurnStartTime { get; set; } // When current player's turn started
 
     public PlayerInfo? CurrentPlayer => 
         CurrentPlayerIndex >= 0 && CurrentPlayerIndex < Players.Count 
@@ -65,7 +71,10 @@ public class GameRoom
     public int MinPlayersRequired => Mode == GameMode.Poker ? 2 : 1;
     
     // Get active players (not folded)
-    public List<PlayerInfo> ActivePlayers => Players.Where(p => !p.IsFolded && p.Status == PlayerStatus.Playing).ToList();
+    public List<PlayerInfo> ActivePlayers => Players.Where(p => !p.IsFolded && p.Status == PlayerStatus.Playing && !p.IsSpectator).ToList();
+    
+    // Get seated players (not spectators)
+    public List<PlayerInfo> SeatedPlayers => Players.Where(p => !p.IsSpectator && p.SeatPosition >= 0).ToList();
 }
 
 public class GameStateDto
@@ -75,6 +84,7 @@ public class GameStateDto
     public GamePhase Phase { get; set; }
     public PokerRound PokerRound { get; set; } // Current poker betting round
     public List<PlayerDto> Players { get; set; } = [];
+    public List<PlayerDto> Spectators { get; set; } = []; // Observers
     public List<CardInfo> DealerHand { get; set; } = [];
     public List<CardInfo> CommunityCards { get; set; } = []; // For Poker
     public int DealerHandValue { get; set; }
@@ -86,6 +96,9 @@ public class GameStateDto
     public int MinPlayersRequired { get; set; }
     public int CurrentPlayerCount { get; set; }
     public int DealerButtonIndex { get; set; }
+    public int TurnTimeoutSeconds { get; set; } = 30; // Turn time limit
+    public DateTime? TurnStartTime { get; set; } // When current turn started
+    public bool IsShowdownPending { get; set; } // Waiting for muck/show decisions
 }
 
 public class PlayerDto
@@ -102,6 +115,8 @@ public class PlayerDto
     public bool IsAllIn { get; set; }
     public int SeatPosition { get; set; }
     public PlayerStatus Status { get; set; }
+    public bool IsSpectator { get; set; }
+    public bool ShowCards { get; set; } = true; // Muck = false
 }
 
 public class RoomInfoDto
@@ -110,9 +125,11 @@ public class RoomInfoDto
     public string RoomName { get; set; } = string.Empty;
     public GameMode Mode { get; set; }
     public int PlayerCount { get; set; }
+    public int SpectatorCount { get; set; }
     public int MaxPlayers { get; set; }
     public GamePhase Phase { get; set; }
     public int MinBet { get; set; }
+    public int AvailableSeats { get; set; }
 }
 
 public enum GameMode

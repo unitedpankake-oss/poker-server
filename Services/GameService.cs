@@ -1,13 +1,18 @@
 using PokerServer.Models;
+using System.Timers;
 
 namespace PokerServer.Services;
 
 public class GameService
 {
     private readonly Dictionary<string, GameRoom> _rooms = new();
+    private readonly Dictionary<string, System.Timers.Timer> _turnTimers = new();
     private readonly object _lock = new();
     private static readonly string[] Suits = ["Hearts", "Diamonds", "Clubs", "Spades"];
     private static readonly string[] Values = ["Ace", "2", "3", "4", "5", "6", "7", "8", "9", "10", "Jack", "Queen", "King"];
+
+    // Event for turn timeout
+    public event Action<string, string>? OnTurnTimeout; // roomId, connectionId
 
     public GameRoom CreateRoom(string roomName, GameMode mode, int minBet = 10)
     {
@@ -32,16 +37,17 @@ public class GameService
         lock (_lock)
         {
             return _rooms.Values
-                .Where(r => r.Players.Count < r.MaxPlayers)
                 .Select(r => new RoomInfoDto
                 {
                     RoomId = r.RoomId,
                     RoomName = r.RoomName,
                     Mode = r.Mode,
-                    PlayerCount = r.Players.Count,
+                    PlayerCount = r.SeatedPlayers.Count,
+                    SpectatorCount = r.Spectators.Count,
                     MaxPlayers = r.MaxPlayers,
                     Phase = r.Phase,
-                    MinBet = r.MinBet
+                    MinBet = r.MinBet,
+                    AvailableSeats = r.MaxPlayers - r.SeatedPlayers.Count
                 })
                 .ToList();
         }
@@ -55,7 +61,7 @@ public class GameService
         }
     }
 
-    public PlayerInfo? JoinRoom(string roomId, string connectionId, string username, int balance)
+    public PlayerInfo? JoinRoom(string roomId, string connectionId, string username, int balance, bool asSpectator = false)
     {
         lock (_lock)
         {
@@ -69,35 +75,125 @@ public class GameService
             if (!_rooms.TryGetValue(roomId, out var room))
                 return null;
 
-            if (room.Players.Count >= room.MaxPlayers)
-                return null;
-
+            // Check if already in room
             var existingPlayer = room.Players.FirstOrDefault(p => p.ConnectionId == connectionId);
             if (existingPlayer != null)
                 return existingPlayer;
-
-            var seatPosition = Enumerable.Range(0, room.MaxPlayers)
-                .First(i => room.Players.All(p => p.SeatPosition != i));
+            
+            var existingSpectator = room.Spectators.FirstOrDefault(p => p.ConnectionId == connectionId);
+            if (existingSpectator != null)
+                return existingSpectator;
 
             var player = new PlayerInfo
             {
                 ConnectionId = connectionId,
                 Username = username,
                 Balance = balance,
-                SeatPosition = seatPosition,
-                Status = PlayerStatus.Waiting
+                SeatPosition = -1,
+                Status = PlayerStatus.Waiting,
+                IsSpectator = asSpectator
             };
 
-            room.Players.Add(player);
+            if (asSpectator)
+            {
+                room.Spectators.Add(player);
+            }
+            else
+            {
+                // Find available seat
+                if (room.SeatedPlayers.Count >= room.MaxPlayers)
+                {
+                    // No seats available, join as spectator
+                    player.IsSpectator = true;
+                    room.Spectators.Add(player);
+                }
+                else
+                {
+                    var seatPosition = Enumerable.Range(0, room.MaxPlayers)
+                        .First(i => room.SeatedPlayers.All(p => p.SeatPosition != i));
+                    player.SeatPosition = seatPosition;
+                    room.Players.Add(player);
+                }
+            }
+
             return player;
+        }
+    }
+
+    public bool TakeSeat(string roomId, string connectionId, int seatPosition)
+    {
+        lock (_lock)
+        {
+            if (!_rooms.TryGetValue(roomId, out var room))
+                return false;
+
+            // Check if seat is available
+            if (room.SeatedPlayers.Any(p => p.SeatPosition == seatPosition))
+                return false;
+
+            if (seatPosition < 0 || seatPosition >= room.MaxPlayers)
+                return false;
+
+            // Find player in spectators
+            var spectator = room.Spectators.FirstOrDefault(p => p.ConnectionId == connectionId);
+            if (spectator != null)
+            {
+                room.Spectators.Remove(spectator);
+                spectator.SeatPosition = seatPosition;
+                spectator.IsSpectator = false;
+                room.Players.Add(spectator);
+                return true;
+            }
+
+            // Or player already seated wants to change seat
+            var player = room.Players.FirstOrDefault(p => p.ConnectionId == connectionId);
+            if (player != null && room.Phase == GamePhase.WaitingForPlayers)
+            {
+                player.SeatPosition = seatPosition;
+                return true;
+            }
+
+            return false;
+        }
+    }
+
+    public bool StandUp(string roomId, string connectionId)
+    {
+        lock (_lock)
+        {
+            if (!_rooms.TryGetValue(roomId, out var room))
+                return false;
+
+            var player = room.Players.FirstOrDefault(p => p.ConnectionId == connectionId);
+            if (player == null)
+                return false;
+
+            // Can only stand up when not in active game
+            if (room.Phase != GamePhase.WaitingForPlayers && room.Phase != GamePhase.GameOver)
+            {
+                if (player.Status == PlayerStatus.Playing && !player.IsFolded)
+                    return false; // Can't leave mid-hand
+            }
+
+            room.Players.Remove(player);
+            player.SeatPosition = -1;
+            player.IsSpectator = true;
+            player.Status = PlayerStatus.Waiting;
+            room.Spectators.Add(player);
+            return true;
         }
     }
 
     private string? FindRoomByConnectionInternal(string connectionId)
     {
-        return _rooms.Values
-            .FirstOrDefault(r => r.Players.Any(p => p.ConnectionId == connectionId))
-            ?.RoomId;
+        foreach (var room in _rooms.Values)
+        {
+            if (room.Players.Any(p => p.ConnectionId == connectionId))
+                return room.RoomId;
+            if (room.Spectators.Any(p => p.ConnectionId == connectionId))
+                return room.RoomId;
+        }
+        return null;
     }
 
     private void LeaveRoomInternal(string roomId, string connectionId)
@@ -106,10 +202,12 @@ public class GameService
             return;
 
         room.Players.RemoveAll(p => p.ConnectionId == connectionId);
+        room.Spectators.RemoveAll(p => p.ConnectionId == connectionId);
 
-        if (room.Players.Count == 0)
+        if (room.Players.Count == 0 && room.Spectators.Count == 0)
         {
             _rooms.Remove(roomId);
+            StopTurnTimer(roomId);
         }
     }
 
@@ -121,11 +219,104 @@ public class GameService
                 return;
 
             room.Players.RemoveAll(p => p.ConnectionId == connectionId);
+            room.Spectators.RemoveAll(p => p.ConnectionId == connectionId);
 
-            if (room.Players.Count == 0)
+            if (room.Players.Count == 0 && room.Spectators.Count == 0)
             {
                 _rooms.Remove(roomId);
+                StopTurnTimer(roomId);
             }
+        }
+    }
+
+    // Timer management
+    public void StartTurnTimer(string roomId)
+    {
+        lock (_lock)
+        {
+            if (!_rooms.TryGetValue(roomId, out var room))
+                return;
+
+            StopTurnTimer(roomId);
+
+            room.CurrentTurnStartTime = DateTime.UtcNow;
+            if (room.CurrentPlayer != null)
+            {
+                room.CurrentPlayer.TurnStartTime = DateTime.UtcNow;
+            }
+
+            var timer = new System.Timers.Timer(room.TurnTimeoutSeconds * 1000);
+            timer.Elapsed += (sender, e) => HandleTurnTimeout(roomId);
+            timer.AutoReset = false;
+            timer.Start();
+
+            _turnTimers[roomId] = timer;
+        }
+    }
+
+    public void StopTurnTimer(string roomId)
+    {
+        if (_turnTimers.TryGetValue(roomId, out var timer))
+        {
+            timer.Stop();
+            timer.Dispose();
+            _turnTimers.Remove(roomId);
+        }
+    }
+
+    private void HandleTurnTimeout(string roomId)
+    {
+        lock (_lock)
+        {
+            if (!_rooms.TryGetValue(roomId, out var room))
+                return;
+
+            var currentPlayer = room.CurrentPlayer;
+            if (currentPlayer == null || currentPlayer.IsFolded || currentPlayer.IsAllIn)
+                return;
+
+            // Auto-fold on timeout
+            currentPlayer.IsFolded = true;
+            currentPlayer.Status = PlayerStatus.Lost;
+
+            // Notify via event
+            OnTurnTimeout?.Invoke(roomId, currentPlayer.ConnectionId);
+
+            // Check if only one player left
+            var activePlayers = room.ActivePlayers;
+            if (activePlayers.Count == 1)
+            {
+                var winner = activePlayers[0];
+                winner.Balance += room.Pot;
+                winner.Status = PlayerStatus.Won;
+                room.Pot = 0;
+                room.Phase = GamePhase.GameOver;
+                StopTurnTimer(roomId);
+                return;
+            }
+
+            AdvancePokerTurn(room);
+            
+            // Start timer for next player
+            if (room.Phase == GamePhase.PlayerTurn)
+            {
+                StartTurnTimer(roomId);
+            }
+        }
+    }
+
+    public int GetRemainingTurnTime(string roomId)
+    {
+        lock (_lock)
+        {
+            if (!_rooms.TryGetValue(roomId, out var room))
+                return 0;
+
+            if (room.CurrentTurnStartTime == null)
+                return room.TurnTimeoutSeconds;
+
+            var elapsed = (DateTime.UtcNow - room.CurrentTurnStartTime.Value).TotalSeconds;
+            return Math.Max(0, room.TurnTimeoutSeconds - (int)elapsed);
         }
     }
 
@@ -171,7 +362,7 @@ public class GameService
             if (!_rooms.TryGetValue(roomId, out var room))
                 return false;
 
-            return room.Players.Count >= room.MinPlayersRequired;
+            return room.SeatedPlayers.Count >= room.MinPlayersRequired;
         }
     }
 
@@ -183,10 +374,52 @@ public class GameService
                 return;
 
             // Only transition if currently waiting for players
-            if (room.Phase == GamePhase.WaitingForPlayers && room.Players.Count >= room.MinPlayersRequired)
+            if (room.Phase == GamePhase.WaitingForPlayers && room.SeatedPlayers.Count >= room.MinPlayersRequired)
             {
                 room.Phase = GamePhase.Betting;
             }
+        }
+    }
+
+    // Muck or Show cards at showdown
+    public bool SetShowCards(string roomId, string connectionId, bool showCards)
+    {
+        lock (_lock)
+        {
+            if (!_rooms.TryGetValue(roomId, out var room))
+                return false;
+
+            var player = room.Players.FirstOrDefault(p => p.ConnectionId == connectionId);
+            if (player == null)
+                return false;
+
+            // Can only muck/show at showdown or game over
+            if (room.Phase != GamePhase.Showdown && room.Phase != GamePhase.GameOver)
+                return false;
+
+            // Winner must show cards
+            if (player.Status == PlayerStatus.Won)
+            {
+                player.ShowCards = true;
+                return true;
+            }
+
+            player.ShowCards = showCards;
+            return true;
+        }
+    }
+
+    public List<int> GetAvailableSeats(string roomId)
+    {
+        lock (_lock)
+        {
+            if (!_rooms.TryGetValue(roomId, out var room))
+                return [];
+
+            var occupiedSeats = room.SeatedPlayers.Select(p => p.SeatPosition).ToHashSet();
+            return Enumerable.Range(0, room.MaxPlayers)
+                .Where(i => !occupiedSeats.Contains(i))
+                .ToList();
         }
     }
 
@@ -396,12 +629,14 @@ public class GameService
         }
     }
 
-    public GameStateDto GetGameState(string roomId)
+    public GameStateDto GetGameState(string roomId, string? viewerConnectionId = null)
     {
         lock (_lock)
         {
             if (!_rooms.TryGetValue(roomId, out var room))
                 return new GameStateDto();
+
+            var isShowdown = room.Phase == GamePhase.Showdown || room.Phase == GamePhase.GameOver;
 
             return new GameStateDto
             {
@@ -415,13 +650,24 @@ public class GameService
                     Balance = p.Balance,
                     CurrentBet = p.CurrentBet,
                     TotalBetThisRound = p.TotalBetThisRound,
-                    Hand = p.Hand,
+                    // Only show cards to owner, or at showdown if ShowCards is true
+                    Hand = GetVisibleHand(p, viewerConnectionId, isShowdown, room.Mode),
                     HandValue = room.Mode == GameMode.Poker ? 0 : CalculateHandValue(p.Hand),
-                    HandDescription = p.HandDescription,
+                    HandDescription = (isShowdown && p.ShowCards) ? p.HandDescription : null,
                     SeatPosition = p.SeatPosition,
                     Status = p.Status,
                     IsFolded = p.IsFolded,
-                    IsAllIn = p.IsAllIn
+                    IsAllIn = p.IsAllIn,
+                    IsSpectator = p.IsSpectator,
+                    ShowCards = p.ShowCards
+                }).ToList(),
+                Spectators = room.Spectators.Select(p => new PlayerDto
+                {
+                    ConnectionId = p.ConnectionId,
+                    Username = p.Username,
+                    Balance = p.Balance,
+                    IsSpectator = true,
+                    SeatPosition = -1
                 }).ToList(),
                 DealerHand = room.DealerHand,
                 CommunityCards = room.CommunityCards,
@@ -432,11 +678,36 @@ public class GameService
                 CurrentPlayerId = room.CurrentPlayer?.ConnectionId,
                 Message = GetPhaseMessage(room),
                 MinPlayersRequired = room.MinPlayersRequired,
-                CurrentPlayerCount = room.Players.Count,
+                CurrentPlayerCount = room.SeatedPlayers.Count,
                 PokerRound = room.PokerRound,
-                DealerButtonIndex = room.DealerButtonIndex
+                DealerButtonIndex = room.DealerButtonIndex,
+                TurnTimeoutSeconds = room.TurnTimeoutSeconds,
+                TurnStartTime = room.CurrentTurnStartTime,
+                IsShowdownPending = isShowdown && room.ActivePlayers.Any(p => !p.IsFolded && p.Status != PlayerStatus.Won)
             };
         }
+    }
+
+    private List<CardInfo> GetVisibleHand(PlayerInfo player, string? viewerConnectionId, bool isShowdown, GameMode mode)
+    {
+        // Player can always see their own cards
+        if (player.ConnectionId == viewerConnectionId)
+            return player.Hand;
+
+        // In blackjack, show all cards
+        if (mode == GameMode.Blackjack)
+            return player.Hand;
+
+        // Folded players' cards are hidden
+        if (player.IsFolded)
+            return player.Hand.Select(c => new CardInfo { Suit = c.Suit, Value = c.Value, IsFaceUp = false }).ToList();
+
+        // At showdown, show cards only if player chose to show (not muck)
+        if (isShowdown && player.ShowCards)
+            return player.Hand;
+
+        // Otherwise, hide cards
+        return player.Hand.Select(c => new CardInfo { Suit = c.Suit, Value = c.Value, IsFaceUp = false }).ToList();
     }
 
     private void AdvanceToNextActivePlayer(GameRoom room)
@@ -597,9 +868,14 @@ public class GameService
     {
         lock (_lock)
         {
-            return _rooms.Values
-                .FirstOrDefault(r => r.Players.Any(p => p.ConnectionId == connectionId))
-                ?.RoomId;
+            foreach (var room in _rooms.Values)
+            {
+                if (room.Players.Any(p => p.ConnectionId == connectionId))
+                    return room.RoomId;
+                if (room.Spectators.Any(p => p.ConnectionId == connectionId))
+                    return room.RoomId;
+            }
+            return null;
         }
     }
 
