@@ -7,10 +7,12 @@ namespace PokerServer.Hubs;
 public class GameHub : Hub
 {
     private readonly GameService _gameService;
+    private readonly UserService _userService;
 
-    public GameHub(GameService gameService)
+    public GameHub(GameService gameService, UserService userService)
     {
         _gameService = gameService;
+        _userService = userService;
         _gameService.OnTurnTimeout += HandleTurnTimeout;
     }
 
@@ -352,4 +354,80 @@ public class GameHub : Hub
             await Clients.Group(roomId).SendAsync("ChatMessageReceived", player.Username, message);
         }
     }
+
+    #region User Authentication
+
+    public async Task<UserDto?> Login(string username, string password)
+    {
+        var user = _userService.Authenticate(username, password);
+        if (user == null)
+            return null;
+        return UserDto.FromAccount(user);
+    }
+
+    public async Task<(bool Success, string Message, UserDto? User)> Register(string username, string email, string password)
+    {
+        var result = _userService.Register(username, email, password);
+        if (result.Success && result.User != null)
+        {
+            return (true, result.Message, UserDto.FromAccount(result.User));
+        }
+        return (result.Success, result.Message, null);
+    }
+
+    public async Task<UserDto?> GetUserInfo(string userId)
+    {
+        var user = _userService.GetUser(userId);
+        return user != null ? UserDto.FromAccount(user) : null;
+    }
+
+    public async Task<bool> UpdateUserBalance(string userId, int newBalance)
+    {
+        return _userService.UpdateBalance(userId, newBalance);
+    }
+
+    #endregion
+
+    #region Admin API
+
+    public async Task<List<UserDto>> AdminGetAllUsers(string adminPassword)
+    {
+        var users = _userService.GetAllUsers(adminPassword);
+        return users.Select(UserDto.FromAccount).ToList();
+    }
+
+    public async Task<bool> AdminUpdateUser(string adminPassword, UserDto user)
+    {
+        var account = new UserAccount
+        {
+            Id = user.Id,
+            Username = user.Username,
+            Email = user.Email,
+            Balance = user.Balance,
+            GamesPlayed = user.GamesPlayed,
+            GamesWon = user.GamesWon,
+            TotalWinnings = user.TotalWinnings,
+            AvatarUrl = user.AvatarUrl
+        };
+        return _userService.UpdateUser(adminPassword, account);
+    }
+
+    public async Task<bool> AdminSetPassword(string adminPassword, string userId, string newPassword)
+    {
+        return _userService.SetPassword(adminPassword, userId, newPassword);
+    }
+
+    public async Task<bool> AdminDeleteUser(string adminPassword, string userId)
+    {
+        return _userService.DeleteUser(adminPassword, userId);
+    }
+
+    public async Task<bool> AdminAddBalance(string adminPassword, string userId, int amount)
+    {
+        if (!_userService.ValidateAdminPassword(adminPassword))
+            return false;
+        return _userService.AddBalance(userId, amount);
+    }
+
+    #endregion
 }
