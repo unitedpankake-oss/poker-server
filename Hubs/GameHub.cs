@@ -49,22 +49,32 @@ public class GameHub : Hub
 
     public async Task<RoomInfoDto?> CreateRoom(string roomName, int mode, int minBet, bool isPersistent = true)
     {
-        var gameMode = (GameMode)mode;
-        var room = _gameService.CreateRoom(roomName, gameMode, minBet, isPersistent);
-        room.CreatorId = Context.ConnectionId;
-        return new RoomInfoDto
+        try
         {
-            RoomId = room.RoomId,
-            RoomName = room.RoomName,
-            Mode = room.Mode,
-            PlayerCount = 0,
-            SpectatorCount = 0,
-            MaxPlayers = room.MaxPlayers,
-            Phase = room.Phase,
-            MinBet = room.MinBet,
-            AvailableSeats = room.MaxPlayers,
-            IsPersistent = room.IsPersistent
-        };
+            Console.WriteLine($"CreateRoom called: roomName={roomName}, mode={mode}, minBet={minBet}");
+            var gameMode = (GameMode)mode;
+            var room = _gameService.CreateRoom(roomName, gameMode, minBet, isPersistent);
+            room.CreatorId = Context.ConnectionId;
+            Console.WriteLine($"Room created: {room.RoomId}");
+            return new RoomInfoDto
+            {
+                RoomId = room.RoomId,
+                RoomName = room.RoomName,
+                Mode = room.Mode,
+                PlayerCount = 0,
+                SpectatorCount = 0,
+                MaxPlayers = room.MaxPlayers,
+                Phase = room.Phase,
+                MinBet = room.MinBet,
+                AvailableSeats = room.MaxPlayers,
+                IsPersistent = room.IsPersistent
+            };
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"CreateRoom error: {ex.Message}\n{ex.StackTrace}");
+            throw;
+        }
     }
 
     public async Task<bool> DeleteRoom(string roomId)
