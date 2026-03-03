@@ -247,13 +247,14 @@ public class GameService
             if (handValue > 21)
             {
                 player.Status = PlayerStatus.Busted;
-                AdvanceToNextActivePlayer(room);
+                MoveToNextPlayer(room);
             }
             else if (handValue == 21)
             {
                 player.Status = PlayerStatus.Standing;
-                AdvanceToNextActivePlayer(room);
+                MoveToNextPlayer(room);
             }
+            // If hand < 21, player can continue to hit or stand
 
             return (true, card);
         }
@@ -270,7 +271,7 @@ public class GameService
                 return false;
 
             room.CurrentPlayer.Status = PlayerStatus.Standing;
-            AdvanceToNextActivePlayer(room);
+            MoveToNextPlayer(room);
 
             return true;
         }
@@ -413,22 +414,44 @@ public class GameService
 
     private void AdvanceToNextActivePlayer(GameRoom room)
     {
-        var startIndex = room.CurrentPlayerIndex;
-        do
+        // Find the first active player starting from current index
+        for (int i = 0; i < room.Players.Count; i++)
         {
-            room.CurrentPlayerIndex++;
-            if (room.CurrentPlayerIndex >= room.Players.Count)
+            var index = (room.CurrentPlayerIndex + i) % room.Players.Count;
+            if (room.Players[index].Status == PlayerStatus.Playing)
             {
-                room.Phase = GamePhase.DealerTurn;
+                room.CurrentPlayerIndex = index;
                 return;
             }
-        } while (room.Players[room.CurrentPlayerIndex].Status != PlayerStatus.Playing &&
-                 room.CurrentPlayerIndex != startIndex);
+        }
+        
+        // No active players found, move to dealer turn
+        room.Phase = GamePhase.DealerTurn;
+    }
 
-        if (room.Players[room.CurrentPlayerIndex].Status != PlayerStatus.Playing)
+    private void MoveToNextPlayer(GameRoom room)
+    {
+        // Move to the next player after current one acts
+        room.CurrentPlayerIndex++;
+        
+        if (room.CurrentPlayerIndex >= room.Players.Count)
         {
             room.Phase = GamePhase.DealerTurn;
+            return;
         }
+        
+        // Find next active player
+        for (int i = room.CurrentPlayerIndex; i < room.Players.Count; i++)
+        {
+            if (room.Players[i].Status == PlayerStatus.Playing)
+            {
+                room.CurrentPlayerIndex = i;
+                return;
+            }
+        }
+        
+        // No more active players
+        room.Phase = GamePhase.DealerTurn;
     }
 
     private static List<CardInfo> CreateDeck()
