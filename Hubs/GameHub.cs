@@ -174,8 +174,16 @@ public class GameHub : Hub
                 _gameService.StartGame(roomId);
                 await Clients.Group(roomId).SendAsync("GameStarted");
                 
-                // Start turn timer for poker
                 var state = _gameService.GetGameState(roomId);
+                
+                // For Blackjack: if all players have Blackjack or Busted, go to dealer turn
+                if (state.Mode == GameMode.Blackjack && state.Phase == GamePhase.DealerTurn)
+                {
+                    await PlayDealerTurn(roomId);
+                    return;
+                }
+                
+                // Start turn timer for poker
                 if (state.Mode == GameMode.Poker && state.Phase == GamePhase.PlayerTurn)
                 {
                     _gameService.StartTurnTimer(roomId);
