@@ -5,7 +5,7 @@ namespace PokerServer.Services;
 public class GameService
 {
     private readonly Dictionary<string, GameRoom> _rooms = new();
-    private readonly Lock _lock = new();
+    private readonly object _lock = new();
     private static readonly string[] Suits = ["Hearts", "Diamonds", "Clubs", "Spades"];
     private static readonly string[] Values = ["Ace", "2", "3", "4", "5", "6", "7", "8", "9", "10", "Jack", "Queen", "King"];
 
