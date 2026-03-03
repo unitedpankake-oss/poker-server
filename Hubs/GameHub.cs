@@ -410,7 +410,9 @@ public class GameHub : Hub
 
     public async Task<List<UserDto>> AdminGetAllUsers(string adminPassword)
     {
+        Console.WriteLine($"AdminGetAllUsers called with password: {adminPassword?.Substring(0, Math.Min(3, adminPassword?.Length ?? 0))}***");
         var users = _userService.GetAllUsers(adminPassword);
+        Console.WriteLine($"AdminGetAllUsers returning {users.Count} users");
         return users.Select(UserDto.FromAccount).ToList();
     }
 

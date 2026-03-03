@@ -74,6 +74,7 @@ public class UserService
 
     public (bool Success, string Message, UserAccount? User) Register(string username, string email, string password)
     {
+        Console.WriteLine($"Register called: username={username}, email={email}");
         lock (_lock)
         {
             if (string.IsNullOrWhiteSpace(username) || username.Length < 3)
@@ -97,6 +98,7 @@ public class UserService
             };
 
             _users.Add(user);
+            Console.WriteLine($"User registered: {username}, total users: {_users.Count}");
             SaveUsers();
             return (true, "Registration successful!", user);
         }
@@ -104,16 +106,23 @@ public class UserService
 
     public bool ValidateAdminPassword(string password)
     {
-        return password == AdminPassword;
+        var isValid = password == AdminPassword;
+        Console.WriteLine($"ValidateAdminPassword: input='{password}', expected='{AdminPassword}', valid={isValid}");
+        return isValid;
     }
 
     public List<UserAccount> GetAllUsers(string adminPassword)
     {
+        Console.WriteLine($"GetAllUsers called. Total users in memory: {_users.Count}");
         if (!ValidateAdminPassword(adminPassword))
+        {
+            Console.WriteLine("GetAllUsers: Invalid admin password");
             return [];
+        }
 
         lock (_lock)
         {
+            Console.WriteLine($"GetAllUsers: Returning {_users.Count} users");
             return _users.ToList();
         }
     }
