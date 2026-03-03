@@ -109,6 +109,7 @@ public class GameService
 
     public GameRoom CreateRoom(string roomName, GameMode mode, int minBet = 10, bool isPersistent = false)
     {
+        Console.WriteLine($"GameService.CreateRoom: {roomName}, mode={mode}, minBet={minBet}");
         var room = new GameRoom
         {
             RoomName = roomName,
