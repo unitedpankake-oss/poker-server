@@ -18,7 +18,15 @@ public class GameService
 
     public GameService()
     {
-        LoadRooms();
+        try
+        {
+            LoadRooms();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error initializing GameService: {ex.Message}");
+            _rooms = new Dictionary<string, GameRoom>();
+        }
     }
 
     private void LoadRooms()
@@ -28,6 +36,11 @@ public class GameService
             if (File.Exists(RoomsFileName))
             {
                 var json = File.ReadAllText(RoomsFileName);
+                if (string.IsNullOrWhiteSpace(json))
+                {
+                    Console.WriteLine("rooms.json is empty, starting fresh");
+                    return;
+                }
                 var savedRooms = JsonSerializer.Deserialize<List<SavedRoomData>>(json);
                 if (savedRooms != null)
                 {
@@ -49,12 +62,15 @@ public class GameService
                         };
                         _rooms[room.RoomId] = room;
                     }
+                    Console.WriteLine($"Loaded {savedRooms.Count} rooms from {RoomsFileName}");
                 }
             }
         }
         catch (Exception ex)
         {
             Console.WriteLine($"Error loading rooms: {ex.Message}");
+            // Delete corrupted file
+            try { File.Delete(RoomsFileName); } catch { }
         }
     }
 
