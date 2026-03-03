@@ -1,4 +1,5 @@
 using PokerServer.Models;
+using System.Text.Json;
 using System.Timers;
 
 namespace PokerServer.Services;
@@ -8,19 +9,96 @@ public class GameService
     private readonly Dictionary<string, GameRoom> _rooms = new();
     private readonly Dictionary<string, System.Timers.Timer> _turnTimers = new();
     private readonly object _lock = new();
+    private const string RoomsFileName = "rooms.json";
     private static readonly string[] Suits = ["Hearts", "Diamonds", "Clubs", "Spades"];
     private static readonly string[] Values = ["Ace", "2", "3", "4", "5", "6", "7", "8", "9", "10", "Jack", "Queen", "King"];
 
     // Event for turn timeout
     public event Action<string, string>? OnTurnTimeout; // roomId, connectionId
 
-    public GameRoom CreateRoom(string roomName, GameMode mode, int minBet = 10)
+    public GameService()
+    {
+        LoadRooms();
+    }
+
+    private void LoadRooms()
+    {
+        try
+        {
+            if (File.Exists(RoomsFileName))
+            {
+                var json = File.ReadAllText(RoomsFileName);
+                var savedRooms = JsonSerializer.Deserialize<List<SavedRoomData>>(json);
+                if (savedRooms != null)
+                {
+                    foreach (var saved in savedRooms)
+                    {
+                        var room = new GameRoom
+                        {
+                            RoomId = saved.RoomId,
+                            RoomName = saved.RoomName,
+                            Mode = saved.Mode,
+                            MinBet = saved.MinBet,
+                            MaxPlayers = saved.MaxPlayers,
+                            SmallBlindAmount = saved.SmallBlindAmount,
+                            BigBlindAmount = saved.BigBlindAmount,
+                            TurnTimeoutSeconds = saved.TurnTimeoutSeconds,
+                            CreatedAt = saved.CreatedAt,
+                            IsPersistent = saved.IsPersistent,
+                            Deck = CreateDeck()
+                        };
+                        _rooms[room.RoomId] = room;
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error loading rooms: {ex.Message}");
+        }
+    }
+
+    private void SaveRooms()
+    {
+        try
+        {
+            lock (_lock)
+            {
+                var savedRooms = _rooms.Values
+                    .Where(r => r.IsPersistent)
+                    .Select(r => new SavedRoomData
+                    {
+                        RoomId = r.RoomId,
+                        RoomName = r.RoomName,
+                        Mode = r.Mode,
+                        MinBet = r.MinBet,
+                        MaxPlayers = r.MaxPlayers,
+                        SmallBlindAmount = r.SmallBlindAmount,
+                        BigBlindAmount = r.BigBlindAmount,
+                        TurnTimeoutSeconds = r.TurnTimeoutSeconds,
+                        CreatedAt = r.CreatedAt,
+                        IsPersistent = r.IsPersistent
+                    })
+                    .ToList();
+
+                var json = JsonSerializer.Serialize(savedRooms, new JsonSerializerOptions { WriteIndented = true });
+                File.WriteAllText(RoomsFileName, json);
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error saving rooms: {ex.Message}");
+        }
+    }
+
+    public GameRoom CreateRoom(string roomName, GameMode mode, int minBet = 10, bool isPersistent = false)
     {
         var room = new GameRoom
         {
             RoomName = roomName,
             Mode = mode,
             MinBet = minBet,
+            IsPersistent = isPersistent,
             Deck = CreateDeck()
         };
 
@@ -29,7 +107,44 @@ public class GameService
             _rooms[room.RoomId] = room;
         }
 
+        if (isPersistent)
+        {
+            SaveRooms();
+        }
+
         return room;
+    }
+
+    public bool DeleteRoom(string roomId)
+    {
+        lock (_lock)
+        {
+            if (!_rooms.TryGetValue(roomId, out var room))
+                return false;
+
+            // Can't delete room with active players
+            if (room.Players.Count > 0 || room.Spectators.Count > 0)
+                return false;
+
+            StopTurnTimer(roomId);
+            _rooms.Remove(roomId);
+            SaveRooms();
+            return true;
+        }
+    }
+
+    public bool ForceDeleteRoom(string roomId)
+    {
+        lock (_lock)
+        {
+            if (!_rooms.ContainsKey(roomId))
+                return false;
+
+            StopTurnTimer(roomId);
+            _rooms.Remove(roomId);
+            SaveRooms();
+            return true;
+        }
     }
 
     public List<RoomInfoDto> GetAvailableRooms()
@@ -47,7 +162,8 @@ public class GameService
                     MaxPlayers = r.MaxPlayers,
                     Phase = r.Phase,
                     MinBet = r.MinBet,
-                    AvailableSeats = r.MaxPlayers - r.SeatedPlayers.Count
+                    AvailableSeats = r.MaxPlayers - r.SeatedPlayers.Count,
+                    IsPersistent = r.IsPersistent
                 })
                 .ToList();
         }
@@ -204,7 +320,8 @@ public class GameService
         room.Players.RemoveAll(p => p.ConnectionId == connectionId);
         room.Spectators.RemoveAll(p => p.ConnectionId == connectionId);
 
-        if (room.Players.Count == 0 && room.Spectators.Count == 0)
+        // Only remove non-persistent rooms when empty
+        if (room.Players.Count == 0 && room.Spectators.Count == 0 && !room.IsPersistent)
         {
             _rooms.Remove(roomId);
             StopTurnTimer(roomId);
@@ -221,7 +338,8 @@ public class GameService
             room.Players.RemoveAll(p => p.ConnectionId == connectionId);
             room.Spectators.RemoveAll(p => p.ConnectionId == connectionId);
 
-            if (room.Players.Count == 0 && room.Spectators.Count == 0)
+            // Only remove non-persistent rooms when empty
+            if (room.Players.Count == 0 && room.Spectators.Count == 0 && !room.IsPersistent)
             {
                 _rooms.Remove(roomId);
                 StopTurnTimer(roomId);

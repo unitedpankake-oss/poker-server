@@ -61,6 +61,8 @@ public class GameRoom
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public int TurnTimeoutSeconds { get; set; } = 30; // Time limit for each turn
     public DateTime? CurrentTurnStartTime { get; set; } // When current player's turn started
+    public bool IsPersistent { get; set; } // If true, room persists after all players leave
+    public string? CreatorId { get; set; } // Connection ID or username of room creator
 
     public PlayerInfo? CurrentPlayer => 
         CurrentPlayerIndex >= 0 && CurrentPlayerIndex < Players.Count 
@@ -75,6 +77,21 @@ public class GameRoom
     
     // Get seated players (not spectators)
     public List<PlayerInfo> SeatedPlayers => Players.Where(p => !p.IsSpectator && p.SeatPosition >= 0).ToList();
+}
+
+public class SavedRoomData
+{
+    public string RoomId { get; set; } = string.Empty;
+    public string RoomName { get; set; } = string.Empty;
+    public GameMode Mode { get; set; }
+    public int MinBet { get; set; }
+    public int MaxPlayers { get; set; }
+    public int SmallBlindAmount { get; set; }
+    public int BigBlindAmount { get; set; }
+    public int TurnTimeoutSeconds { get; set; }
+    public DateTime CreatedAt { get; set; }
+    public bool IsPersistent { get; set; }
+    public string? CreatorId { get; set; }
 }
 
 public class GameStateDto
@@ -130,6 +147,7 @@ public class RoomInfoDto
     public GamePhase Phase { get; set; }
     public int MinBet { get; set; }
     public int AvailableSeats { get; set; }
+    public bool IsPersistent { get; set; }
 }
 
 public enum GameMode

@@ -45,9 +45,10 @@ public class GameHub : Hub
         return _gameService.GetAvailableRooms();
     }
 
-    public async Task<RoomInfoDto?> CreateRoom(string roomName, GameMode mode, int minBet)
+    public async Task<RoomInfoDto?> CreateRoom(string roomName, GameMode mode, int minBet, bool isPersistent = true)
     {
-        var room = _gameService.CreateRoom(roomName, mode, minBet);
+        var room = _gameService.CreateRoom(roomName, mode, minBet, isPersistent);
+        room.CreatorId = Context.ConnectionId;
         return new RoomInfoDto
         {
             RoomId = room.RoomId,
@@ -58,8 +59,30 @@ public class GameHub : Hub
             MaxPlayers = room.MaxPlayers,
             Phase = room.Phase,
             MinBet = room.MinBet,
-            AvailableSeats = room.MaxPlayers
+            AvailableSeats = room.MaxPlayers,
+            IsPersistent = room.IsPersistent
         };
+    }
+
+    public async Task<bool> DeleteRoom(string roomId)
+    {
+        var success = _gameService.DeleteRoom(roomId);
+        if (success)
+        {
+            await Clients.All.SendAsync("RoomDeleted", roomId);
+        }
+        return success;
+    }
+
+    public async Task<bool> ForceDeleteRoom(string roomId)
+    {
+        var success = _gameService.ForceDeleteRoom(roomId);
+        if (success)
+        {
+            await Clients.Group(roomId).SendAsync("RoomClosed");
+            await Clients.All.SendAsync("RoomDeleted", roomId);
+        }
+        return success;
     }
 
     public async Task<bool> JoinRoom(string roomId, string username, int balance, bool asSpectator = false)
