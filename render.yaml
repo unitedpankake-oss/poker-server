@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: poker-server
+    env: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    envVars:
+      - key: ASPNETCORE_URLS
+        value: http://+:$PORT
+      - key: ASPNETCORE_ENVIRONMENT
+        value: Production
