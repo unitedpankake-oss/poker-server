@@ -45,9 +45,10 @@ public class GameHub : Hub
         return _gameService.GetAvailableRooms();
     }
 
-    public async Task<RoomInfoDto?> CreateRoom(string roomName, GameMode mode, int minBet, bool isPersistent = true)
+    public async Task<RoomInfoDto?> CreateRoom(string roomName, int mode, int minBet, bool isPersistent = true)
     {
-        var room = _gameService.CreateRoom(roomName, mode, minBet, isPersistent);
+        var gameMode = (GameMode)mode;
+        var room = _gameService.CreateRoom(roomName, gameMode, minBet, isPersistent);
         room.CreatorId = Context.ConnectionId;
         return new RoomInfoDto
         {
