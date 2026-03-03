@@ -59,6 +59,13 @@ public class GameService
     {
         lock (_lock)
         {
+            // First, leave any existing room
+            var existingRoomId = FindRoomByConnectionInternal(connectionId);
+            if (existingRoomId != null && existingRoomId != roomId)
+            {
+                LeaveRoomInternal(existingRoomId, connectionId);
+            }
+            
             if (!_rooms.TryGetValue(roomId, out var room))
                 return null;
 
@@ -83,6 +90,26 @@ public class GameService
 
             room.Players.Add(player);
             return player;
+        }
+    }
+
+    private string? FindRoomByConnectionInternal(string connectionId)
+    {
+        return _rooms.Values
+            .FirstOrDefault(r => r.Players.Any(p => p.ConnectionId == connectionId))
+            ?.RoomId;
+    }
+
+    private void LeaveRoomInternal(string roomId, string connectionId)
+    {
+        if (!_rooms.TryGetValue(roomId, out var room))
+            return;
+
+        room.Players.RemoveAll(p => p.ConnectionId == connectionId);
+
+        if (room.Players.Count == 0)
+        {
+            _rooms.Remove(roomId);
         }
     }
 
