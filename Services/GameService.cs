@@ -471,6 +471,25 @@ public class GameService
             player.Status = PlayerStatus.Betting;
             player.IsReady = true;
 
+            Console.WriteLine($"PlaceBet: {player.Username} bet ${amount}, IsReady={player.IsReady}");
+            return true;
+        }
+    }
+
+    // For Poker: players just need to confirm they're ready (no pre-bet required)
+    public bool SetPlayerReady(string roomId, string connectionId)
+    {
+        lock (_lock)
+        {
+            if (!_rooms.TryGetValue(roomId, out var room))
+                return false;
+
+            var player = room.Players.FirstOrDefault(p => p.ConnectionId == connectionId);
+            if (player == null)
+                return false;
+
+            player.IsReady = true;
+            Console.WriteLine($"SetPlayerReady: {player.Username} is ready");
             return true;
         }
     }

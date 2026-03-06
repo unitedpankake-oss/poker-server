@@ -163,6 +163,32 @@ public class GameHub : Hub
         return _gameService.GetRemainingTurnTime(roomId);
     }
 
+    // For Poker: just mark player as ready (no pre-bet, blinds are automatic)
+    public async Task SetReady(string roomId)
+    {
+        if (_gameService.SetPlayerReady(roomId, Context.ConnectionId))
+        {
+            await Clients.Group(roomId).SendAsync("PlayerReady", Context.ConnectionId);
+            
+            if (_gameService.AllPlayersReady(roomId))
+            {
+                _gameService.StartGame(roomId);
+                await Clients.Group(roomId).SendAsync("GameStarted");
+                
+                var state = _gameService.GetGameState(roomId);
+                
+                // Start turn timer for poker
+                if (state.Mode == GameMode.Poker && state.Phase == GamePhase.PlayerTurn)
+                {
+                    _gameService.StartTurnTimer(roomId);
+                    await Clients.Group(roomId).SendAsync("TurnTimerStarted", state.CurrentPlayerId, state.TurnTimeoutSeconds);
+                }
+            }
+            
+            await Clients.Group(roomId).SendAsync("GameStateUpdated", _gameService.GetGameState(roomId));
+        }
+    }
+
     public async Task PlaceBet(string roomId, int amount)
     {
         if (_gameService.PlaceBet(roomId, Context.ConnectionId, amount))
