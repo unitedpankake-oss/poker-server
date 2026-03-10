@@ -613,11 +613,13 @@ public class GameService
         {
             foreach (var player in room.Players)
             {
-                player.Hand.Add(DrawCard(room));
+                var card = DrawCard(room);
+                card.IsFaceUp = true; // Player cards are always face-up
+                player.Hand.Add(card);
             }
             
             var dealerCard = DrawCard(room);
-            if (i == 1) dealerCard.IsFaceUp = false; // Second dealer card face down
+            dealerCard.IsFaceUp = (i == 0); // First card face-up, second face-down
             room.DealerHand.Add(dealerCard);
         }
 
@@ -655,6 +657,7 @@ public class GameService
 
             var player = room.CurrentPlayer;
             var card = DrawCard(room);
+            card.IsFaceUp = true; // Player cards are always face-up
             player.Hand.Add(card);
 
             var handValue = CalculateHandValue(player.Hand);
