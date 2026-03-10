@@ -1,0 +1,45 @@
+﻿<Window
+    x:Class="BlackjackGame.MainWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:views="clr-namespace:BlackjackGame.Views"
+    Title="Royal Casino - Premium Gaming"
+    Width="1400"
+    Height="900"
+    MinWidth="1200"
+    MinHeight="800"
+    WindowStartupLocation="CenterScreen"
+    WindowState="Maximized">
+    
+    <Window.Background>
+        <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+            <GradientStop Color="#0D1117" Offset="0"/>
+            <GradientStop Color="#161B22" Offset="1"/>
+        </LinearGradientBrush>
+    </Window.Background>
+    
+    <Grid x:Name="MainContainer">
+        <!-- Login View -->
+        <views:LoginView x:Name="LoginViewControl" 
+                         LoginSuccessful="LoginView_LoginSuccessful"/>
+        
+        <!-- Game Table View (Single Player) -->
+        <views:GameTableView x:Name="GameTableViewControl" 
+                             Visibility="Collapsed"
+                             LogoutRequested="GameTableView_LogoutRequested"
+                             UserUpdated="GameTableView_UserUpdated"/>
+        
+        <!-- Lobby View (Multiplayer) -->
+        <views:LobbyView x:Name="LobbyViewControl" 
+                         Visibility="Collapsed"
+                         BackRequested="LobbyView_BackRequested"
+                         RoomJoined="LobbyView_RoomJoined"
+                         SinglePlayerRequested="LobbyView_SinglePlayerRequested"/>
+        
+        <!-- Multiplayer Game View -->
+        <views:MultiplayerGameView x:Name="MultiplayerGameViewControl" 
+                                    Visibility="Collapsed"
+                                    LeaveRequested="MultiplayerGameView_LeaveRequested"
+                                    UserUpdated="MultiplayerGameView_UserUpdated"/>
+    </Grid>
+</Window>
