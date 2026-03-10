@@ -1070,18 +1070,39 @@ public class GameService
             }
         }
 
-        // Post blinds
-        var smallBlindIndex = (room.DealerButtonIndex + 1) % room.Players.Count;
-        var bigBlindIndex = (room.DealerButtonIndex + 2) % room.Players.Count;
+        // Post blinds - special case for heads-up (2 players)
+        int smallBlindIndex, bigBlindIndex;
+        if (room.Players.Count == 2)
+        {
+            // Heads-up: dealer posts small blind, other posts big blind
+            smallBlindIndex = room.DealerButtonIndex;
+            bigBlindIndex = (room.DealerButtonIndex + 1) % 2;
+        }
+        else
+        {
+            // 3+ players: standard positions
+            smallBlindIndex = (room.DealerButtonIndex + 1) % room.Players.Count;
+            bigBlindIndex = (room.DealerButtonIndex + 2) % room.Players.Count;
+        }
 
+        Console.WriteLine($"Blinds: SB={room.Players[smallBlindIndex].Username} (${room.SmallBlindAmount}), BB={room.Players[bigBlindIndex].Username} (${room.BigBlindAmount})");
+        
         PostBlind(room, room.Players[smallBlindIndex], room.SmallBlindAmount);
         PostBlind(room, room.Players[bigBlindIndex], room.BigBlindAmount);
 
         room.CurrentBetToMatch = room.BigBlindAmount;
 
-        // Action starts left of big blind
-        room.CurrentPlayerIndex = (bigBlindIndex + 1) % room.Players.Count;
+        // Action starts: heads-up = small blind acts first, otherwise left of big blind
+        if (room.Players.Count == 2)
+        {
+            room.CurrentPlayerIndex = smallBlindIndex; // SB acts first in heads-up preflop
+        }
+        else
+        {
+            room.CurrentPlayerIndex = (bigBlindIndex + 1) % room.Players.Count;
+        }
         
+        Console.WriteLine($"First to act: {room.Players[room.CurrentPlayerIndex].Username}");
         room.Phase = GamePhase.PlayerTurn;
     }
 
@@ -1093,6 +1114,8 @@ public class GameService
         player.CurrentBet = actualAmount;
         room.Pot += actualAmount;
 
+
+
         if (player.Balance == 0)
             player.IsAllIn = true;
     }
@@ -1102,12 +1125,34 @@ public class GameService
         lock (_lock)
         {
             if (!_rooms.TryGetValue(roomId, out var room) || room.Mode != GameMode.Poker)
+            {
+                Console.WriteLine($"PokerFold failed: room not found or not poker");
                 return false;
+            }
 
+            // Find the player
+            var player = room.Players.FirstOrDefault(p => p.ConnectionId == connectionId);
+            if (player == null)
+            {
+                Console.WriteLine($"PokerFold failed: player not found");
+                return false;
+            }
+
+            // Check if it's this player's turn
             if (room.CurrentPlayer?.ConnectionId != connectionId)
+            {
+                Console.WriteLine($"PokerFold failed: not player's turn. Current={room.CurrentPlayer?.Username}, Requested={player.Username}");
                 return false;
+            }
 
-            var player = room.CurrentPlayer;
+            // Can't fold if already folded or all-in
+            if (player.IsFolded || player.IsAllIn)
+            {
+                Console.WriteLine($"PokerFold failed: player already folded or all-in");
+                return false;
+            }
+
+            Console.WriteLine($"PokerFold: {player.Username} folds");
             player.IsFolded = true;
             player.Status = PlayerStatus.Lost;
 
@@ -1121,6 +1166,7 @@ public class GameService
                 winner.Status = PlayerStatus.Won;
                 room.Pot = 0;
                 room.Phase = GamePhase.GameOver;
+                Console.WriteLine($"PokerFold: {winner.Username} wins pot");
                 return true;
             }
 
@@ -1136,10 +1182,9 @@ public class GameService
             if (!_rooms.TryGetValue(roomId, out var room) || room.Mode != GameMode.Poker)
                 return false;
 
-            if (room.CurrentPlayer?.ConnectionId != connectionId)
+            var player = room.Players.FirstOrDefault(p => p.ConnectionId == connectionId);
+            if (player == null || room.CurrentPlayer?.ConnectionId != connectionId)
                 return false;
-
-            var player = room.CurrentPlayer;
             
             // Can only check if no bet to match
             if (room.CurrentBetToMatch > player.TotalBetThisRound)
@@ -1158,10 +1203,10 @@ public class GameService
             if (!_rooms.TryGetValue(roomId, out var room) || room.Mode != GameMode.Poker)
                 return false;
 
-            if (room.CurrentPlayer?.ConnectionId != connectionId)
+            var player = room.Players.FirstOrDefault(p => p.ConnectionId == connectionId);
+            if (player == null || room.CurrentPlayer?.ConnectionId != connectionId)
                 return false;
 
-            var player = room.CurrentPlayer;
             var toCall = room.CurrentBetToMatch - player.TotalBetThisRound;
             
             if (toCall <= 0)
@@ -1173,8 +1218,11 @@ public class GameService
             player.CurrentBet = actualCall;
             room.Pot += actualCall;
 
+            Console.WriteLine($"PokerCall: {player.Username} calls ${actualCall}, TotalBet=${player.TotalBetThisRound}");
+
             if (player.Balance == 0)
                 player.IsAllIn = true;
+
 
             player.HasActedThisRound = true;
             AdvancePokerTurn(room);
@@ -1189,10 +1237,10 @@ public class GameService
             if (!_rooms.TryGetValue(roomId, out var room) || room.Mode != GameMode.Poker)
                 return false;
 
-            if (room.CurrentPlayer?.ConnectionId != connectionId)
+            var player = room.Players.FirstOrDefault(p => p.ConnectionId == connectionId);
+            if (player == null || room.CurrentPlayer?.ConnectionId != connectionId)
                 return false;
 
-            var player = room.CurrentPlayer;
             var toCall = room.CurrentBetToMatch - player.TotalBetThisRound;
             var totalNeeded = toCall + raiseAmount;
 
@@ -1207,6 +1255,8 @@ public class GameService
             player.CurrentBet = totalNeeded;
             room.Pot += totalNeeded;
             room.CurrentBetToMatch = player.TotalBetThisRound;
+
+            Console.WriteLine($"PokerRaise: {player.Username} raises to ${player.TotalBetThisRound}, CurrentBetToMatch=${room.CurrentBetToMatch}");
 
             if (player.Balance == 0)
                 player.IsAllIn = true;
