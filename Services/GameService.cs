@@ -1257,30 +1257,64 @@ public class GameService
 
     private void AdvancePokerTurn(GameRoom room)
     {
+        // Get active players (not folded)
+        var activePlayers = room.Players.Where(p => !p.IsFolded).ToList();
+        
+        // If only one player left, they win
+        if (activePlayers.Count == 1)
+        {
+            var winner = activePlayers[0];
+            winner.Balance += room.Pot;
+            winner.Status = PlayerStatus.Won;
+            room.Pot = 0;
+            room.Phase = GamePhase.GameOver;
+            return;
+        }
+        
         // Get players who can still act (not folded, not all-in)
         var playersWhoCanAct = room.Players.Where(p => !p.IsFolded && !p.IsAllIn).ToList();
         
-        // If only one player can act and they've matched the bet, or no one can act, move to next round
+        // Check if at least one player is all-in
+        var anyAllIn = activePlayers.Any(p => p.IsAllIn);
+        
+        // If no one can act, or only one player can act and all bets are matched with someone all-in
         if (playersWhoCanAct.Count == 0)
         {
-            // Everyone is all-in or folded, deal remaining cards
-            AdvancePokerRound(room);
+            // Everyone is all-in or folded, deal remaining cards and showdown
+            DealRemainingCardsAndShowdown(room);
             return;
+        }
+        
+        // If one player can act but others are all-in and bets are matched
+        if (anyAllIn && playersWhoCanAct.Count == 1)
+        {
+            var player = playersWhoCanAct[0];
+            // If this player has matched the all-in bet or gone over, go to showdown
+            if (player.TotalBetThisRound >= room.CurrentBetToMatch && player.HasActedThisRound)
+            {
+                DealRemainingCardsAndShowdown(room);
+                return;
+            }
         }
 
         // Check if betting round is complete (all active players have acted and matched the bet)
         var allPlayersActed = playersWhoCanAct.All(p => p.HasActedThisRound);
-        var allBetsMatched = playersWhoCanAct.All(p => p.TotalBetThisRound == room.CurrentBetToMatch);
+        var allBetsMatched = playersWhoCanAct.All(p => p.TotalBetThisRound >= room.CurrentBetToMatch);
         
         if (allPlayersActed && allBetsMatched)
         {
-            // Betting round complete, advance to next round
+            // If someone is all-in and bets are matched, go straight to showdown
+            if (anyAllIn)
+            {
+                DealRemainingCardsAndShowdown(room);
+                return;
+            }
+            // Otherwise, advance to next betting round
             AdvancePokerRound(room);
             return;
         }
 
         // Find next player who can act
-        var startIndex = room.CurrentPlayerIndex;
         var iterations = 0;
         do
         {
@@ -1298,8 +1332,30 @@ public class GameService
             iterations++;
         } while (iterations < room.Players.Count);
 
-        // No more players need to act, advance round
-        AdvancePokerRound(room);
+        // No more players need to act
+        if (anyAllIn)
+        {
+            DealRemainingCardsAndShowdown(room);
+        }
+        else
+        {
+            AdvancePokerRound(room);
+        }
+    }
+
+    private void DealRemainingCardsAndShowdown(GameRoom room)
+    {
+        Console.WriteLine($"DealRemainingCardsAndShowdown: CommunityCards={room.CommunityCards.Count}");
+        
+        // Deal remaining community cards
+        while (room.CommunityCards.Count < 5)
+        {
+            DealCommunityCards(room, 1);
+        }
+        
+        room.PokerRound = PokerRound.Showdown;
+        room.Phase = GamePhase.Showdown;
+        DeterminePokerWinner(room);
     }
 
     private void AdvancePokerRound(GameRoom room)
