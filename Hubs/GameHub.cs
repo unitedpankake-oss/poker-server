@@ -457,14 +457,14 @@ public class GameHub : Hub
         return new LoginResult { Success = false, Message = "Invalid username or password" };
     }
 
-    public async Task<(bool Success, string Message, UserDto? User)> Register(string username, string email, string password)
+    public async Task<RegisterResult> Register(string username, string email, string password)
     {
         var result = _userService.Register(username, email, password);
         if (result.Success && result.User != null)
         {
-            return (true, result.Message, UserDto.FromAccount(result.User));
+            return new RegisterResult { Success = true, Message = result.Message, User = UserDto.FromAccount(result.User) };
         }
-        return (result.Success, result.Message, null);
+        return new RegisterResult { Success = false, Message = result.Message };
     }
 
     public async Task<UserDto?> GetUserInfo(string userId)
