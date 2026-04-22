@@ -516,5 +516,94 @@ public class GameHub : Hub
         return _userService.AddBalance(userId, amount);
     }
 
+    public async Task<Dictionary<string, object>> AdminGetServerStats(string adminPassword)
+    {
+        if (!_userService.ValidateAdminPassword(adminPassword))
+            return new Dictionary<string, object>();
+
+        var allUsers = _userService.GetAllUsers(adminPassword);
+        var rooms = _gameService.GetAvailableRooms();
+
+        var totalPlayers = 0;
+        var totalSpectators = 0;
+        foreach (var roomInfo in rooms)
+        {
+            var room = _gameService.GetRoom(roomInfo.RoomId);
+            if (room != null)
+            {
+                totalPlayers += room.Players.Count;
+                totalSpectators += room.Spectators.Count;
+            }
+        }
+
+        return new Dictionary<string, object>
+        {
+            ["TotalUsers"] = allUsers.Count,
+            ["OnlinePlayers"] = totalPlayers,
+            ["OnlineSpectators"] = totalSpectators,
+            ["ActiveRooms"] = rooms.Count,
+            ["TotalGamesPlayed"] = allUsers.Sum(u => u.GamesPlayed),
+            ["TotalMoneyInCirculation"] = allUsers.Sum(u => (long)u.Balance),
+            ["BannedUsers"] = allUsers.Count(u => u.IsBanned),
+            ["ServerUptime"] = (DateTime.UtcNow - _serverStartTime).ToString(@"dd\.hh\:mm\:ss")
+        };
+    }
+
+    private static readonly DateTime _serverStartTime = DateTime.UtcNow;
+
+    public async Task<List<ActivityEntry>> AdminGetActivityLog(string adminPassword, int count = 50)
+    {
+        return _userService.GetRecentActivity(adminPassword, count);
+    }
+
+    public async Task<bool> AdminBroadcastMessage(string adminPassword, string message)
+    {
+        if (!_userService.ValidateAdminPassword(adminPassword))
+            return false;
+
+        await Clients.All.SendAsync("ServerBroadcast", message);
+        _userService.AddActivity($"Admin broadcast: {message}");
+        return true;
+    }
+
+    public async Task<bool> AdminBanUser(string adminPassword, string userId, string? reason)
+    {
+        return _userService.BanUser(adminPassword, userId, reason);
+    }
+
+    public async Task<bool> AdminUnbanUser(string adminPassword, string userId)
+    {
+        return _userService.UnbanUser(adminPassword, userId);
+    }
+
+    public async Task<List<Dictionary<string, object>>> AdminGetActiveRooms(string adminPassword)
+    {
+        if (!_userService.ValidateAdminPassword(adminPassword))
+            return [];
+
+        var rooms = _gameService.GetAvailableRooms();
+        var result = new List<Dictionary<string, object>>();
+
+        foreach (var roomInfo in rooms)
+        {
+            var room = _gameService.GetRoom(roomInfo.RoomId);
+            if (room == null) continue;
+
+            result.Add(new Dictionary<string, object>
+            {
+                ["RoomId"] = roomInfo.RoomId,
+                ["RoomName"] = roomInfo.RoomName,
+                ["Mode"] = room.Mode.ToString(),
+                ["Phase"] = room.Phase.ToString(),
+                ["PlayerCount"] = room.Players.Count,
+                ["SpectatorCount"] = room.Spectators.Count,
+                ["Players"] = room.Players.Select(p => p.Username).ToList(),
+                ["Pot"] = room.Pot
+            });
+        }
+
+        return result;
+    }
+
     #endregion
 }

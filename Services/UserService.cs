@@ -64,8 +64,11 @@ public class UserService
 
             if (user != null)
             {
+                if (user.IsBanned)
+                    return null; // banned users cannot log in
                 user.LastLogin = DateTime.UtcNow;
                 SaveUsers();
+                AddActivity($"User logged in: {user.Username}");
             }
 
             return user;
@@ -100,6 +103,7 @@ public class UserService
             _users.Add(user);
             Console.WriteLine($"User registered: {username}, total users: {_users.Count}");
             SaveUsers();
+            AddActivity($"New user registered: {username} ({email})");
             return (true, "Registration successful!", user);
         }
     }
@@ -250,7 +254,66 @@ public class UserService
         return Convert.ToBase64String(hash);
     }
 
+    public bool BanUser(string adminPassword, string userId, string? reason)
+    {
+        if (!ValidateAdminPassword(adminPassword)) return false;
+        lock (_lock)
+        {
+            var user = _users.FirstOrDefault(u => u.Id == userId);
+            if (user == null) return false;
+            user.IsBanned = true;
+            user.BanReason = reason;
+            SaveUsers();
+            AddActivity($"User '{user.Username}' was BANNED. Reason: {reason ?? "none"}");
+            return true;
+        }
+    }
+
+    public bool UnbanUser(string adminPassword, string userId)
+    {
+        if (!ValidateAdminPassword(adminPassword)) return false;
+        lock (_lock)
+        {
+            var user = _users.FirstOrDefault(u => u.Id == userId);
+            if (user == null) return false;
+            user.IsBanned = false;
+            user.BanReason = null;
+            SaveUsers();
+            AddActivity($"User '{user.Username}' was UNBANNED");
+            return true;
+        }
+    }
+
+    // --- Activity Log ---
+    private readonly List<ActivityEntry> _activityLog = [];
+    private readonly object _activityLock = new();
+
+    public void AddActivity(string message)
+    {
+        lock (_activityLock)
+        {
+            _activityLog.Add(new ActivityEntry { Message = message });
+            if (_activityLog.Count > 200)
+                _activityLog.RemoveAt(0);
+        }
+    }
+
+    public List<ActivityEntry> GetRecentActivity(string adminPassword, int count = 50)
+    {
+        if (!ValidateAdminPassword(adminPassword)) return [];
+        lock (_activityLock)
+        {
+            return _activityLog.OrderByDescending(a => a.Timestamp).Take(count).ToList();
+        }
+    }
+
     public static string CreatePasswordHash(string password) => HashPassword(password);
+}
+
+public class ActivityEntry
+{
+    public DateTime Timestamp { get; set; } = DateTime.UtcNow;
+    public string Message { get; set; } = string.Empty;
 }
 
 public class UserAccount
@@ -266,6 +329,8 @@ public class UserAccount
     public int GamesPlayed { get; set; }
     public int GamesWon { get; set; }
     public int TotalWinnings { get; set; }
+    public bool IsBanned { get; set; }
+    public string? BanReason { get; set; }
 }
 
 public class UserDto
@@ -280,6 +345,8 @@ public class UserDto
     public int GamesPlayed { get; set; }
     public int GamesWon { get; set; }
     public int TotalWinnings { get; set; }
+    public bool IsBanned { get; set; }
+    public string? BanReason { get; set; }
 
     public static UserDto FromAccount(UserAccount account) => new()
     {
@@ -292,6 +359,8 @@ public class UserDto
         LastLogin = account.LastLogin,
         GamesPlayed = account.GamesPlayed,
         GamesWon = account.GamesWon,
-        TotalWinnings = account.TotalWinnings
+        TotalWinnings = account.TotalWinnings,
+        IsBanned = account.IsBanned,
+        BanReason = account.BanReason
     };
 }
