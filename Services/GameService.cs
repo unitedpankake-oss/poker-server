@@ -337,8 +337,8 @@ public class GameService
         room.Players.RemoveAll(p => p.ConnectionId == connectionId);
         room.Spectators.RemoveAll(p => p.ConnectionId == connectionId);
 
-        // Only remove non-persistent rooms when empty
-        if (room.Players.Count == 0 && room.Spectators.Count == 0 && !room.IsPersistent)
+        // Remove empty rooms
+        if (room.Players.Count == 0 && room.Spectators.Count == 0)
         {
             _rooms.Remove(roomId);
             StopTurnTimer(roomId);
@@ -355,8 +355,8 @@ public class GameService
             room.Players.RemoveAll(p => p.ConnectionId == connectionId);
             room.Spectators.RemoveAll(p => p.ConnectionId == connectionId);
 
-            // Only remove non-persistent rooms when empty
-            if (room.Players.Count == 0 && room.Spectators.Count == 0 && !room.IsPersistent)
+            // Remove empty rooms
+            if (room.Players.Count == 0 && room.Spectators.Count == 0)
             {
                 _rooms.Remove(roomId);
                 StopTurnTimer(roomId);

@@ -75,7 +75,7 @@ public class GameHub : Hub
         return _gameService.GetAvailableRooms();
     }
 
-    public async Task<RoomInfoDto?> CreateRoom(string roomName, int mode, int minBet, bool isPersistent = true)
+    public async Task<RoomInfoDto?> CreateRoom(string roomName, int mode, int minBet, bool isPersistent = false)
     {
         try
         {
@@ -583,29 +583,29 @@ public class GameHub : Hub
         return _userService.UnbanUser(adminPassword, userId);
     }
 
-    public async Task<List<Dictionary<string, object>>> AdminGetActiveRooms(string adminPassword)
+    public async Task<List<AdminRoomInfo>> AdminGetActiveRooms(string adminPassword)
     {
         if (!_userService.ValidateAdminPassword(adminPassword))
             return [];
 
         var rooms = _gameService.GetAvailableRooms();
-        var result = new List<Dictionary<string, object>>();
+        var result = new List<AdminRoomInfo>();
 
         foreach (var roomInfo in rooms)
         {
             var room = _gameService.GetRoom(roomInfo.RoomId);
             if (room == null) continue;
 
-            result.Add(new Dictionary<string, object>
+            result.Add(new AdminRoomInfo
             {
-                ["RoomId"] = roomInfo.RoomId,
-                ["RoomName"] = roomInfo.RoomName,
-                ["Mode"] = room.Mode.ToString(),
-                ["Phase"] = room.Phase.ToString(),
-                ["PlayerCount"] = room.Players.Count,
-                ["SpectatorCount"] = room.Spectators.Count,
-                ["Players"] = room.Players.Select(p => p.Username).ToList(),
-                ["Pot"] = room.Pot
+                RoomId = roomInfo.RoomId,
+                RoomName = roomInfo.RoomName,
+                Mode = room.Mode.ToString(),
+                Phase = room.Phase.ToString(),
+                PlayerCount = room.Players.Count,
+                SpectatorCount = room.Spectators.Count,
+                Players = room.Players.Select(p => p.Username).ToList(),
+                Pot = room.Pot
             });
         }
 

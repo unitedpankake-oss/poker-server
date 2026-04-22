@@ -151,6 +151,18 @@ public class RoomInfoDto
     public bool IsPersistent { get; set; }
 }
 
+public class AdminRoomInfo
+{
+    public string RoomId { get; set; } = string.Empty;
+    public string RoomName { get; set; } = string.Empty;
+    public string Mode { get; set; } = string.Empty;
+    public string Phase { get; set; } = string.Empty;
+    public int PlayerCount { get; set; }
+    public int SpectatorCount { get; set; }
+    public List<string> Players { get; set; } = [];
+    public int Pot { get; set; }
+}
+
 public enum GameMode
 {
     Blackjack,
