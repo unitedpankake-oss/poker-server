@@ -13,14 +13,42 @@ public class GameHub : Hub
     {
         _gameService = gameService;
         _userService = userService;
-        _gameService.OnTurnTimeout += HandleTurnTimeout;
     }
 
-    private async void HandleTurnTimeout(string roomId, string connectionId)
+    /// <summary>
+    /// Sends per-player game state so each player only sees their own cards.
+    /// For poker this is critical — opponents' hole cards must be hidden.
+    /// </summary>
+    private async Task BroadcastGameState(string roomId)
     {
-        await Clients.Group(roomId).SendAsync("TurnTimeout", connectionId);
-        await Clients.Group(roomId).SendAsync("PlayerFolded", connectionId);
-        await Clients.Group(roomId).SendAsync("GameStateUpdated", _gameService.GetGameState(roomId));
+        var room = _gameService.GetRoom(roomId);
+        if (room == null) return;
+
+        // Snapshot connection IDs to avoid collection-modified issues
+        var playerIds = room.Players.Select(p => p.ConnectionId).ToList();
+        var spectatorIds = room.Spectators.Select(p => p.ConnectionId).ToList();
+
+        // Send personalized state to each player
+        foreach (var playerId in playerIds)
+        {
+            try
+            {
+                var state = _gameService.GetGameState(roomId, playerId);
+                await Clients.Client(playerId).SendAsync("GameStateUpdated", state);
+            }
+            catch { /* player may have disconnected */ }
+        }
+
+        // Send spectator view (no viewer ID — all opponent cards hidden)
+        var spectatorState = _gameService.GetGameState(roomId);
+        foreach (var specId in spectatorIds)
+        {
+            try
+            {
+                await Clients.Client(specId).SendAsync("GameStateUpdated", spectatorState);
+            }
+            catch { /* spectator may have disconnected */ }
+        }
     }
 
     public override async Task OnConnectedAsync()
@@ -37,7 +65,7 @@ public class GameHub : Hub
             _gameService.LeaveRoom(roomId, Context.ConnectionId);
             await Groups.RemoveFromGroupAsync(Context.ConnectionId, roomId);
             await Clients.Group(roomId).SendAsync("PlayerLeft", Context.ConnectionId);
-            await Clients.Group(roomId).SendAsync("GameStateUpdated", _gameService.GetGameState(roomId));
+            await BroadcastGameState(roomId);
         }
         await base.OnDisconnectedAsync(exception);
     }
@@ -113,7 +141,7 @@ public class GameHub : Hub
             _gameService.TransitionToBetting(roomId);
         }
         
-        await Clients.Group(roomId).SendAsync("GameStateUpdated", _gameService.GetGameState(roomId, Context.ConnectionId));
+        await BroadcastGameState(roomId);
         return true;
     }
 
@@ -133,7 +161,7 @@ public class GameHub : Hub
                 _gameService.TransitionToBetting(roomId);
             }
             
-            await Clients.Group(roomId).SendAsync("GameStateUpdated", _gameService.GetGameState(roomId));
+            await BroadcastGameState(roomId);
             return true;
         }
         return false;
@@ -144,7 +172,7 @@ public class GameHub : Hub
         if (_gameService.StandUp(roomId, Context.ConnectionId))
         {
             await Clients.Group(roomId).SendAsync("PlayerStoodUp", Context.ConnectionId);
-            await Clients.Group(roomId).SendAsync("GameStateUpdated", _gameService.GetGameState(roomId));
+            await BroadcastGameState(roomId);
             return true;
         }
         return false;
@@ -155,7 +183,7 @@ public class GameHub : Hub
         _gameService.LeaveRoom(roomId, Context.ConnectionId);
         await Groups.RemoveFromGroupAsync(Context.ConnectionId, roomId);
         await Clients.Group(roomId).SendAsync("PlayerLeft", Context.ConnectionId);
-        await Clients.Group(roomId).SendAsync("GameStateUpdated", _gameService.GetGameState(roomId));
+        await BroadcastGameState(roomId);
     }
 
     public async Task<int> GetRemainingTime(string roomId)
@@ -185,7 +213,7 @@ public class GameHub : Hub
                 }
             }
             
-            await Clients.Group(roomId).SendAsync("GameStateUpdated", _gameService.GetGameState(roomId));
+            await BroadcastGameState(roomId);
         }
     }
 
@@ -217,7 +245,7 @@ public class GameHub : Hub
                 }
             }
             
-            await Clients.Group(roomId).SendAsync("GameStateUpdated", _gameService.GetGameState(roomId));
+            await BroadcastGameState(roomId);
         }
     }
 
@@ -229,7 +257,7 @@ public class GameHub : Hub
             await Clients.Group(roomId).SendAsync("CardDealt", Context.ConnectionId, card);
             
             var state = _gameService.GetGameState(roomId);
-            await Clients.Group(roomId).SendAsync("GameStateUpdated", state);
+            await BroadcastGameState(roomId);
             
             
             if (state.Phase == GamePhase.DealerTurn)
@@ -244,7 +272,7 @@ public class GameHub : Hub
         if (_gameService.Stand(roomId, Context.ConnectionId))
         {
             var state = _gameService.GetGameState(roomId);
-            await Clients.Group(roomId).SendAsync("GameStateUpdated", state);
+            await BroadcastGameState(roomId);
             
             if (state.Phase == GamePhase.DealerTurn)
             {
@@ -263,7 +291,7 @@ public class GameHub : Hub
             await Clients.Group(roomId).SendAsync("PlayerFolded", Context.ConnectionId);
             
             var state = _gameService.GetGameState(roomId);
-            await Clients.Group(roomId).SendAsync("GameStateUpdated", state);
+            await BroadcastGameState(roomId);
             
             // Start timer for next player if game continues
             if (state.Phase == GamePhase.PlayerTurn)
@@ -282,7 +310,7 @@ public class GameHub : Hub
             await Clients.Group(roomId).SendAsync("PlayerChecked", Context.ConnectionId);
             
             var state = _gameService.GetGameState(roomId);
-            await Clients.Group(roomId).SendAsync("GameStateUpdated", state);
+            await BroadcastGameState(roomId);
             
             if (state.Phase == GamePhase.PlayerTurn)
             {
@@ -300,7 +328,7 @@ public class GameHub : Hub
             await Clients.Group(roomId).SendAsync("PlayerCalled", Context.ConnectionId);
             
             var state = _gameService.GetGameState(roomId);
-            await Clients.Group(roomId).SendAsync("GameStateUpdated", state);
+            await BroadcastGameState(roomId);
             
             if (state.Phase == GamePhase.PlayerTurn)
             {
@@ -318,7 +346,7 @@ public class GameHub : Hub
             await Clients.Group(roomId).SendAsync("PlayerRaised", Context.ConnectionId, amount);
             
             var state = _gameService.GetGameState(roomId);
-            await Clients.Group(roomId).SendAsync("GameStateUpdated", state);
+            await BroadcastGameState(roomId);
             
             if (state.Phase == GamePhase.PlayerTurn)
             {
@@ -336,7 +364,7 @@ public class GameHub : Hub
             await Clients.Group(roomId).SendAsync("PlayerAllIn", Context.ConnectionId);
             
             var state = _gameService.GetGameState(roomId);
-            await Clients.Group(roomId).SendAsync("GameStateUpdated", state);
+            await BroadcastGameState(roomId);
             
             if (state.Phase == GamePhase.PlayerTurn)
             {
@@ -351,7 +379,7 @@ public class GameHub : Hub
         if (_gameService.SetShowCards(roomId, Context.ConnectionId, false))
         {
             await Clients.Group(roomId).SendAsync("PlayerMucked", Context.ConnectionId);
-            await Clients.Group(roomId).SendAsync("GameStateUpdated", _gameService.GetGameState(roomId));
+            await BroadcastGameState(roomId);
         }
     }
 
@@ -360,7 +388,7 @@ public class GameHub : Hub
         if (_gameService.SetShowCards(roomId, Context.ConnectionId, true))
         {
             await Clients.Group(roomId).SendAsync("PlayerShowedCards", Context.ConnectionId);
-            await Clients.Group(roomId).SendAsync("GameStateUpdated", _gameService.GetGameState(roomId));
+            await BroadcastGameState(roomId);
         }
     }
 
@@ -368,10 +396,23 @@ public class GameHub : Hub
 
     private async Task PlayDealerTurn(string roomId)
     {
-        await Task.Delay(500); // Small delay for dramatic effect
-        _gameService.PlayDealerTurn(roomId);
+        // Step 1: Reveal the hidden card — client plays flip animation
+        _gameService.RevealDealerCards(roomId);
+        await BroadcastGameState(roomId);
+        await Task.Delay(800); // wait for flip
+
+        // Step 2: Draw cards one-by-one with pauses between each
+        while (_gameService.DealerNeedsCard(roomId))
+        {
+            _gameService.DealerDrawOneCard(roomId);
+            await BroadcastGameState(roomId);
+            await Task.Delay(900); // pause so client animates each card sliding in
+        }
+
+        // Step 3: Determine winners
+        _gameService.DetermineBlackjackWinners(roomId);
         await Clients.Group(roomId).SendAsync("DealerTurnComplete");
-        await Clients.Group(roomId).SendAsync("GameStateUpdated", _gameService.GetGameState(roomId));
+        await BroadcastGameState(roomId);
     }
 
     public async Task NewRound(string roomId)
@@ -386,7 +427,7 @@ public class GameHub : Hub
             _gameService.ResetForNewRound(roomId);
         }
         await Clients.Group(roomId).SendAsync("NewRoundStarted");
-        await Clients.Group(roomId).SendAsync("GameStateUpdated", _gameService.GetGameState(roomId));
+        await BroadcastGameState(roomId);
     }
 
     public async Task SendChatMessage(string roomId, string message)

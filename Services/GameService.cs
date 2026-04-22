@@ -391,11 +391,14 @@ public class GameService
 
     public void StopTurnTimer(string roomId)
     {
-        if (_turnTimers.TryGetValue(roomId, out var timer))
+        lock (_lock)
         {
-            timer.Stop();
-            timer.Dispose();
-            _turnTimers.Remove(roomId);
+            if (_turnTimers.TryGetValue(roomId, out var timer))
+            {
+                timer.Stop();
+                timer.Dispose();
+                _turnTimers.Remove(roomId);
+            }
         }
     }
 
@@ -694,7 +697,10 @@ public class GameService
         }
     }
 
-    public void PlayDealerTurn(string roomId)
+    /// <summary>
+    /// Step 1: Reveal dealer's hidden card. Called separately so the client sees the flip.
+    /// </summary>
+    public void RevealDealerCards(string roomId)
     {
         lock (_lock)
         {
@@ -702,20 +708,49 @@ public class GameService
                 return;
 
             room.Phase = GamePhase.DealerTurn;
-
-            // Reveal hidden card
             foreach (var card in room.DealerHand)
-            {
                 card.IsFaceUp = true;
-            }
+        }
+    }
 
-            // Dealer draws until 17 or higher
-            while (CalculateHandValue(room.DealerHand) < 17)
-            {
-                room.DealerHand.Add(DrawCard(room));
-            }
+    /// <summary>
+    /// Returns true if dealer needs another card (hand value below 17).
+    /// </summary>
+    public bool DealerNeedsCard(string roomId)
+    {
+        lock (_lock)
+        {
+            if (!_rooms.TryGetValue(roomId, out var room)) return false;
+            return CalculateHandValue(room.DealerHand) < 17;
+        }
+    }
 
-            // Determine winners
+    /// <summary>
+    /// Draw exactly one card for the dealer. Returns true if successful.
+    /// </summary>
+    public bool DealerDrawOneCard(string roomId)
+    {
+        lock (_lock)
+        {
+            if (!_rooms.TryGetValue(roomId, out var room)) return false;
+            if (CalculateHandValue(room.DealerHand) >= 17) return false;
+
+            var card = DrawCard(room);
+            card.IsFaceUp = true;
+            room.DealerHand.Add(card);
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// Determine winners after dealer is done drawing. Sets phase to GameOver.
+    /// </summary>
+    public void DetermineBlackjackWinners(string roomId)
+    {
+        lock (_lock)
+        {
+            if (!_rooms.TryGetValue(roomId, out var room)) return;
+
             var dealerValue = CalculateHandValue(room.DealerHand);
             var dealerBusted = dealerValue > 21;
 
@@ -739,7 +774,7 @@ public class GameService
                     else
                     {
                         player.Status = PlayerStatus.Won;
-                        player.Balance += (int)(player.CurrentBet * 2.5); // Blackjack pays 3:2
+                        player.Balance += (int)(player.CurrentBet * 2.5);
                     }
                 }
                 else if (dealerBusted || playerValue > dealerValue)
@@ -762,6 +797,24 @@ public class GameService
         }
     }
 
+    /// <summary>
+    /// Legacy method kept for compatibility — does the full dealer turn in one call.
+    /// </summary>
+    public void PlayDealerTurn(string roomId)
+    {
+        lock (_lock)
+        {
+            if (!_rooms.TryGetValue(roomId, out var room)) return;
+            room.Phase = GamePhase.DealerTurn;
+            foreach (var card in room.DealerHand) card.IsFaceUp = true;
+            while (CalculateHandValue(room.DealerHand) < 17)
+            {
+                var c = DrawCard(room); c.IsFaceUp = true; room.DealerHand.Add(c);
+            }
+        }
+        DetermineBlackjackWinners(roomId);
+    }
+
     public void ResetForNewRound(string roomId)
     {
         lock (_lock)
@@ -769,7 +822,12 @@ public class GameService
             if (!_rooms.TryGetValue(roomId, out var room))
                 return;
 
-            room.Phase = GamePhase.Betting;
+            // Remove players with no balance first
+            room.Players.RemoveAll(p => p.Balance <= 0);
+
+            room.Phase = room.Players.Count >= room.MinPlayersRequired 
+                ? GamePhase.Betting 
+                : GamePhase.WaitingForPlayers;
             room.DealerHand.Clear();
             room.CurrentPlayerIndex = 0;
 
@@ -780,9 +838,6 @@ public class GameService
                 player.Status = PlayerStatus.Waiting;
                 player.IsReady = false;
             }
-
-            // Remove players with no balance
-            room.Players.RemoveAll(p => p.Balance <= 0);
         }
     }
 
@@ -826,8 +881,8 @@ public class GameService
                     IsSpectator = true,
                     SeatPosition = -1
                 }).ToList(),
-                DealerHand = room.DealerHand,
-                CommunityCards = room.CommunityCards,
+                DealerHand = room.DealerHand.Select(c => new CardInfo { Suit = c.Suit, Value = c.Value, IsFaceUp = c.IsFaceUp }).ToList(),
+                CommunityCards = room.CommunityCards.Select(c => new CardInfo { Suit = c.Suit, Value = c.Value, IsFaceUp = c.IsFaceUp }).ToList(),
                 DealerHandValue = CalculateHandValue(room.DealerHand.Where(c => c.IsFaceUp).ToList()),
                 Pot = room.Pot,
                 CurrentBetToMatch = room.CurrentBetToMatch,
@@ -847,13 +902,13 @@ public class GameService
 
     private List<CardInfo> GetVisibleHand(PlayerInfo player, string? viewerConnectionId, bool isShowdown, GameMode mode)
     {
-        // Player can always see their own cards
+        // Player can always see their own cards (face-up copy)
         if (player.ConnectionId == viewerConnectionId)
-            return player.Hand;
+            return player.Hand.Select(c => new CardInfo { Suit = c.Suit, Value = c.Value, IsFaceUp = true }).ToList();
 
-        // In blackjack, show all cards
+        // In blackjack, show all cards face-up
         if (mode == GameMode.Blackjack)
-            return player.Hand;
+            return player.Hand.Select(c => new CardInfo { Suit = c.Suit, Value = c.Value, IsFaceUp = true }).ToList();
 
         // Folded players' cards are hidden
         if (player.IsFolded)
@@ -861,7 +916,7 @@ public class GameService
 
         // At showdown, show cards only if player chose to show (not muck)
         if (isShowdown && player.ShowCards)
-            return player.Hand;
+            return player.Hand.Select(c => new CardInfo { Suit = c.Suit, Value = c.Value, IsFaceUp = true }).ToList();
 
         // Otherwise, hide cards
         return player.Hand.Select(c => new CardInfo { Suit = c.Suit, Value = c.Value, IsFaceUp = false }).ToList();
@@ -1057,6 +1112,7 @@ public class GameService
             player.TotalBetThisRound = 0;
             player.HasActedThisRound = false;
             player.HandDescription = null;
+            player.TotalInvested = 0;
         }
 
         // Deal 2 hole cards to each player (face down for others)
@@ -1112,9 +1168,8 @@ public class GameService
         player.Balance -= actualAmount;
         player.TotalBetThisRound = actualAmount;
         player.CurrentBet = actualAmount;
+        player.TotalInvested += actualAmount;
         room.Pot += actualAmount;
-
-
 
         if (player.Balance == 0)
             player.IsAllIn = true;
@@ -1210,12 +1265,18 @@ public class GameService
             var toCall = room.CurrentBetToMatch - player.TotalBetThisRound;
             
             if (toCall <= 0)
-                return PokerCheck(roomId, connectionId);
+            {
+                // Treat as a check instead of recursive call
+                player.HasActedThisRound = true;
+                AdvancePokerTurn(room);
+                return true;
+            }
 
             var actualCall = Math.Min(toCall, player.Balance);
             player.Balance -= actualCall;
             player.TotalBetThisRound += actualCall;
             player.CurrentBet = actualCall;
+            player.TotalInvested += actualCall;
             room.Pot += actualCall;
 
             Console.WriteLine($"PokerCall: {player.Username} calls ${actualCall}, TotalBet=${player.TotalBetThisRound}");
@@ -1253,6 +1314,7 @@ public class GameService
             player.Balance -= totalNeeded;
             player.TotalBetThisRound += totalNeeded;
             player.CurrentBet = totalNeeded;
+            player.TotalInvested += totalNeeded;
             room.Pot += totalNeeded;
             room.CurrentBetToMatch = player.TotalBetThisRound;
 
@@ -1288,6 +1350,7 @@ public class GameService
 
             player.TotalBetThisRound += allInAmount;
             player.CurrentBet = allInAmount;
+            player.TotalInvested += allInAmount;
             room.Pot += allInAmount;
             player.Balance = 0;
             player.IsAllIn = true;
@@ -1424,9 +1487,17 @@ public class GameService
 
         // Set action to first active player after dealer
         room.CurrentPlayerIndex = (room.DealerButtonIndex + 1) % room.Players.Count;
+        var loopGuard = 0;
         while (room.Players[room.CurrentPlayerIndex].IsFolded || room.Players[room.CurrentPlayerIndex].IsAllIn)
         {
             room.CurrentPlayerIndex = (room.CurrentPlayerIndex + 1) % room.Players.Count;
+            loopGuard++;
+            if (loopGuard >= room.Players.Count)
+            {
+                // All players are folded or all-in — go straight to showdown
+                DealRemainingCardsAndShowdown(room);
+                return;
+            }
         }
 
         switch (room.PokerRound)
@@ -1508,30 +1579,133 @@ public class GameService
             playerHands.Add((player, handResult));
         }
 
-        // Sort by hand strength
+        // Sort by hand strength (best first)
         playerHands = playerHands.OrderByDescending(ph => ph.Hand, 
             Comparer<PokerHandEvaluator.HandResult>.Create((a, b) => a.CompareTo(b))).ToList();
 
-        // Find winners (could be multiple if tie)
-        var bestHand = playerHands[0].Hand;
-        var winners = playerHands.Where(ph => ph.Hand.CompareTo(bestHand) == 0).Select(ph => ph.Player).ToList();
+        // Calculate side pots
+        var sidePots = CalculateSidePots(room);
 
-        // Split pot among winners
-        var winAmount = room.Pot / winners.Count;
-        foreach (var winner in winners)
+        // Distribute each pot to the best eligible hand
+        foreach (var pot in sidePots)
         {
-            winner.Balance += winAmount;
-            winner.Status = PlayerStatus.Won;
+            var eligibleHands = playerHands
+                .Where(ph => pot.EligiblePlayerIds.Contains(ph.Player.ConnectionId))
+                .ToList();
+
+            if (eligibleHands.Count == 0)
+                continue;
+
+            var bestHand = eligibleHands[0].Hand;
+            var winners = eligibleHands
+                .Where(ph => ph.Hand.CompareTo(bestHand) == 0)
+                .Select(ph => ph.Player)
+                .ToList();
+
+            var winAmount = pot.Amount / winners.Count;
+            var remainder = pot.Amount % winners.Count;
+
+            for (int i = 0; i < winners.Count; i++)
+            {
+                // Award remainder chip to first winner (closest to dealer button)
+                var extra = i == 0 ? remainder : 0;
+                winners[i].Balance += winAmount + extra;
+                winners[i].Status = PlayerStatus.Won;
+            }
         }
 
         // Mark others as lost
-        foreach (var player in activePlayers.Where(p => !winners.Contains(p)))
+        foreach (var player in activePlayers.Where(p => p.Status != PlayerStatus.Won))
         {
             player.Status = PlayerStatus.Lost;
         }
 
         room.Pot = 0;
         room.Phase = GamePhase.GameOver;
+    }
+
+    private class SidePot
+    {
+        public int Amount { get; set; }
+        public HashSet<string> EligiblePlayerIds { get; set; } = [];
+    }
+
+    private static List<SidePot> CalculateSidePots(GameRoom room)
+    {
+        var allPlayers = room.Players.Where(p => !p.IsSpectator).ToList();
+        var activePlayers = allPlayers.Where(p => !p.IsFolded).ToList();
+        
+        // Get distinct all-in contribution levels sorted ascending
+        var allInLevels = allPlayers
+            .Where(p => p.IsAllIn && p.TotalInvested > 0)
+            .Select(p => p.TotalInvested)
+            .Distinct()
+            .OrderBy(x => x)
+            .ToList();
+
+        // If no all-in players, it's just one main pot
+        if (allInLevels.Count == 0)
+        {
+            return [new SidePot 
+            { 
+                Amount = room.Pot, 
+                EligiblePlayerIds = activePlayers.Select(p => p.ConnectionId).ToHashSet() 
+            }];
+        }
+
+        var pots = new List<SidePot>();
+        int previousLevel = 0;
+
+        foreach (var level in allInLevels)
+        {
+            var increment = level - previousLevel;
+            if (increment <= 0) continue;
+
+            // Each player who invested at least this level contributes to this pot
+            var contributors = allPlayers.Where(p => p.TotalInvested >= level).ToList();
+            var potAmount = increment * contributors.Count;
+
+            // Only non-folded players who contributed enough are eligible to win
+            var eligible = contributors.Where(p => !p.IsFolded).Select(p => p.ConnectionId).ToHashSet();
+
+            if (eligible.Count > 0)
+            {
+                pots.Add(new SidePot { Amount = potAmount, EligiblePlayerIds = eligible });
+            }
+
+            previousLevel = level;
+        }
+
+        // Main pot: remaining contributions above the highest all-in level
+        var remainingContributors = allPlayers.Where(p => p.TotalInvested > previousLevel).ToList();
+        if (remainingContributors.Count > 0)
+        {
+            var mainPotAmount = remainingContributors.Sum(p => p.TotalInvested - previousLevel);
+            var eligible = remainingContributors.Where(p => !p.IsFolded).Select(p => p.ConnectionId).ToHashSet();
+            if (eligible.Count > 0 && mainPotAmount > 0)
+            {
+                pots.Add(new SidePot { Amount = mainPotAmount, EligiblePlayerIds = eligible });
+            }
+        }
+
+        // Verify total matches room pot; if mismatch due to folded players' contributions, adjust
+        var totalDistributed = pots.Sum(p => p.Amount);
+        if (totalDistributed < room.Pot && pots.Count > 0)
+        {
+            // Remaining goes to the last pot (main pot)
+            pots[^1].Amount += room.Pot - totalDistributed;
+        }
+        else if (pots.Count == 0)
+        {
+            // Fallback: single pot
+            pots.Add(new SidePot 
+            { 
+                Amount = room.Pot, 
+                EligiblePlayerIds = activePlayers.Select(p => p.ConnectionId).ToHashSet() 
+            });
+        }
+
+        return pots;
     }
 
     public void ResetPokerForNewRound(string roomId)
@@ -1541,8 +1715,19 @@ public class GameService
             if (!_rooms.TryGetValue(roomId, out var room))
                 return;
 
-            // Move dealer button
-            room.DealerButtonIndex = (room.DealerButtonIndex + 1) % room.Players.Count;
+            // Remove players with no balance FIRST
+            room.Players.RemoveAll(p => p.Balance <= 0);
+
+            // Then adjust and advance dealer button safely
+            if (room.Players.Count > 0)
+            {
+                room.DealerButtonIndex = room.DealerButtonIndex % room.Players.Count;
+                room.DealerButtonIndex = (room.DealerButtonIndex + 1) % room.Players.Count;
+            }
+            else
+            {
+                room.DealerButtonIndex = 0;
+            }
 
             room.Phase = GamePhase.Betting;
             room.CommunityCards.Clear();
@@ -1562,10 +1747,15 @@ public class GameService
                 player.IsAllIn = false;
                 player.HasActedThisRound = false;
                 player.HandDescription = null;
+                player.ShowCards = true;
+                player.TotalInvested = 0;
             }
 
-            // Remove players with no balance
-            room.Players.RemoveAll(p => p.Balance <= 0);
+            // Check if we still have enough players
+            if (room.Players.Count < room.MinPlayersRequired)
+            {
+                room.Phase = GamePhase.WaitingForPlayers;
+            }
         }
     }
 

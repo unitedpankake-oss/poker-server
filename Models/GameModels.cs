@@ -18,6 +18,7 @@ public class PlayerInfo
     public bool IsSpectator { get; set; } // True if watching, not playing
     public bool ShowCards { get; set; } = true; // Whether to show cards at showdown (muck = false)
     public DateTime? TurnStartTime { get; set; } // When player's turn started (for timer)
+    public int TotalInvested { get; set; } // Total money put into pot this hand (for side pot calculation)
 }
 
 public class CardInfo

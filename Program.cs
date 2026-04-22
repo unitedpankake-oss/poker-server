@@ -7,6 +7,7 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddSignalR();
 builder.Services.AddSingleton<GameService>();
 builder.Services.AddSingleton<UserService>();
+builder.Services.AddHostedService<TurnTimeoutService>();
 builder.Services.AddCors(options =>
 {
     options.AddDefaultPolicy(policy =>
