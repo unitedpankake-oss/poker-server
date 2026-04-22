@@ -442,12 +442,19 @@ public class GameHub : Hub
 
     #region User Authentication
 
-    public async Task<UserDto?> Login(string username, string password)
+    public async Task<LoginResult> Login(string username, string password)
     {
         var user = _userService.Authenticate(username, password);
-        if (user == null)
-            return null;
-        return UserDto.FromAccount(user);
+        if (user != null)
+            return new LoginResult { Success = true, User = UserDto.FromAccount(user) };
+
+        // Check if banned
+        var allUsers = _userService.GetAllUsers(_userService.GetAdminPassword());
+        var found = allUsers.FirstOrDefault(u => u.Username.Equals(username, StringComparison.OrdinalIgnoreCase));
+        if (found != null && found.IsBanned)
+            return new LoginResult { Success = false, Message = $"Account banned: {found.BanReason ?? "Contact admin"}" };
+
+        return new LoginResult { Success = false, Message = "Invalid username or password" };
     }
 
     public async Task<(bool Success, string Message, UserDto? User)> Register(string username, string email, string password)

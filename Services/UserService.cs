@@ -7,7 +7,7 @@ namespace PokerServer.Services;
 public class UserService
 {
     private const string UsersFileName = "users.json";
-    private const string AdminPassword = "admin123"; // Change this!
+    private const string AdminPassword = "IvanHovorun18!"; // Change this!  
     private readonly object _lock = new();
     private List<UserAccount> _users = [];
 
@@ -114,6 +114,8 @@ public class UserService
         Console.WriteLine($"ValidateAdminPassword: input='{password}', expected='{AdminPassword}', valid={isValid}");
         return isValid;
     }
+
+    public string GetAdminPassword() => AdminPassword;
 
     public List<UserAccount> GetAllUsers(string adminPassword)
     {
@@ -314,6 +316,13 @@ public class ActivityEntry
 {
     public DateTime Timestamp { get; set; } = DateTime.UtcNow;
     public string Message { get; set; } = string.Empty;
+}
+
+public class LoginResult
+{
+    public bool Success { get; set; }
+    public string? Message { get; set; }
+    public UserDto? User { get; set; }
 }
 
 public class UserAccount
