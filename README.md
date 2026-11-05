@@ -25,6 +25,21 @@ build or hosting. After committing and pushing the changes to the branch connect
 to Render, deploy the latest commit in Render (or let automatic deployment run).
 The existing Render URL then serves the game. Health checks use `/health`.
 
+The server embeds the page, CSS and JavaScript in its assembly and delivers them
+as one HTML response, so the game does not depend on separate asset requests or
+the process working directory. SignalR 8.0.29 is bundled locally under `wwwroot/vendor`
+(MIT license alongside it); the browser can fall back to HTTP Long Polling when
+WebSockets are unavailable. Connection failures show a retry button.
+
+### Browser regression checks
+Start the server, then run `npm ci` and `npx playwright install chromium` once.
+Run `npm run test:browser`; the default target is `http://127.0.0.1:8080`.
+Set `POKER_TEST_URL` to use another running test server and `CHROMIUM_PATH` to
+use an existing Chromium installation. These checks create temporary guest tables:
+use a development instance. They cover blocked asset requests, two-player poker,
+invitations, chat, blackjack, mobile layout, failed connection/retry, and HTTP fallback.
+Node.js is needed only for these checks, not for building or hosting the application.
+
 ### Desktop client
 1. Download the client (PokerClient.zip)
 2. Run poker.exe

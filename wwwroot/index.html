@@ -2,13 +2,14 @@
 <html lang="ru">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>River Club · Покер онлайн</title><link rel="stylesheet" href="/style.css"><script src="/app.js" defer></script></head>
 <body>
-<header><a href="/" class="brand">♠ RIVER CLUB</a><span id="connection" role="status">Подключение…</span></header>
+<header><a href="/" class="brand">♠ RIVER CLUB</a><span id="connection" role="status">Подключение…</span><button id="reconnect" class="secondary" hidden>Подключиться снова</button></header>
+<noscript>Для игры нужен JavaScript. Включите его в настройках браузера и обновите страницу.</noscript>
 <main>
 <section id="lobby">
 <p class="eyebrow">ВАШ СТОЛ УЖЕ ЖДЁТ</p><h1>Хорошие карты.<br>Хорошая компания.</h1><p class="intro">Покер и блэкджек в браузере. Создайте стол и пригласите друзей. Только игровые фишки, без денежных ставок.</p>
 <div class="panel"><label>Ваше имя<input id="name" maxlength="24" placeholder="Введите имя" autocomplete="nickname"></label>
-<form id="create"><label>Название стола<input id="roomName" maxlength="48" value="Стол друзей" required></label><label>Игра<select id="mode"><option value="1">Техасский холдем</option><option value="0">Блэкджек</option></select></label><label>Минимальная ставка<input id="minBet" type="number" min="1" max="100" value="10" required></label><button>Создать стол →</button></form></div>
-<div class="section-title"><h2>Открытые столы</h2><button id="refresh" class="secondary">Обновить</button></div><div id="rooms" class="rooms"></div>
+<form id="create"><label>Название стола<input id="roomName" maxlength="48" value="Стол друзей" required></label><label>Игра<select id="mode"><option value="1">Техасский холдем</option><option value="0">Блэкджек</option></select></label><label>Минимальная ставка<input id="minBet" type="number" min="1" max="100" value="10" required></label><button disabled>Создать стол →</button></form></div>
+<div class="section-title"><h2>Открытые столы</h2><button id="refresh" class="secondary" disabled>Обновить</button></div><div id="rooms" class="rooms"></div>
 </section>
 <section id="game" hidden>
 <div class="section-title"><div><p class="eyebrow" id="gameMode"></p><h1 id="tableName">Игровой стол</h1></div><button id="leave" class="secondary">Выйти из-за стола</button></div>

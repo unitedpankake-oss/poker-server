@@ -1,43 +1,77 @@
 'use strict';
 const $ = id => document.getElementById(id);
-let socket, connectionId, roomId, state, sequence = 0, connected = false, busy = false, roomMinBet = 10;
-const pending = new Map();
+let connectionId, roomId, state, connected = false, busy = false, roomMinBet = 10;
+const hub = new signalR.HubConnectionBuilder()
+  .withUrl('/gamehub', { timeout: 20000 })
+  .withAutomaticReconnect([0, 2000, 5000, 10000])
+  .configureLogging(signalR.LogLevel.Warning)
+  .build();
 const phases = ['Ожидаем игроков', 'Время ставок', 'Раздача', 'Ход игрока', 'Ход дилера', 'Вскрытие', 'Раунд завершён'];
 function error(e) { $('error').textContent = e.message || String(e); }
 function node(tag, text, cls) { const el = document.createElement(tag); if(text !== undefined) el.textContent = text; if(cls) el.className = cls; return el; }
 function invoke(target, ...args) {
-  if (!connected) return Promise.reject(new Error('Нет подключения. Обновите страницу, чтобы подключиться заново.'));
-  const invocationId = String(++sequence);
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => { pending.delete(invocationId); reject(new Error('Сервер не ответил вовремя')); }, 15000);
-    pending.set(invocationId, {resolve, reject, timer});
-    socket.send(JSON.stringify({type:1, invocationId, target, arguments:args}) + '\x1e');
-  });
+  if (!connected) return Promise.reject(new Error('Нет подключения. Нажмите «Подключиться снова».'));
+  return hub.invoke(target, ...args);
 }
 async function run(action) { try { $('error').textContent=''; await action(); } catch(e) { error(e); } }
-async function connect() {
-  const response = await fetch('/gamehub/negotiate?negotiateVersion=1', {method:'POST'});
-  if(!response.ok) throw new Error('Сервер недоступен');
-  const info = await response.json(); connectionId = info.connectionId;
-  await new Promise((resolve, reject) => {
-    const url = new URL('/gamehub', location.href); url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'; url.searchParams.set('id',info.connectionToken);
-    socket = new WebSocket(url);
-    const timeout = setTimeout(() => {socket.close();reject(new Error('Подключение заняло слишком много времени'));},15000);
-    socket.onopen = () => socket.send('{"protocol":"json","version":1}\x1e');
-    socket.onerror = () => {clearTimeout(timeout);reject(new Error('Ошибка подключения'));};
-    socket.onmessage = event => {
-      for(const raw of event.data.split('\x1e').filter(Boolean)) {
-        const message = JSON.parse(raw);
-        if(message.type === undefined) {clearTimeout(timeout);if(message.error){reject(new Error(message.error));return;} connected=true;resolve();}
-        if(message.type===3) {const p=pending.get(message.invocationId);if(p){clearTimeout(p.timer);pending.delete(message.invocationId);message.error?p.reject(new Error(message.error)):p.resolve(message.result);}}
-        if(message.type===1) receive(message.target,message.arguments);
-        if(message.type===7) socket.close();
-      }
-    };
-    socket.onclose = () => { clearTimeout(timeout); connected=false; $('connection').textContent='Соединение потеряно · обновите страницу'; for(const p of pending.values()){clearTimeout(p.timer);p.reject(new Error('Соединение потеряно'));} pending.clear(); renderActions(); reject(new Error('Соединение закрыто')); };
-  });
-  $('connection').textContent='● Онлайн';
+function connectionStatus(text, online, retry = false) {
+  connected = online;
+  $('connection').textContent = text;
+  $('reconnect').hidden = !retry;
+  $('create').querySelector('button').disabled = !online;
+  $('refresh').disabled = !online;
+  renderActions();
+}
+for (const event of ['Connected', 'GameStateUpdated', 'ChatMessageReceived', 'RoomClosed', 'ServerMessage']) {
+  hub.on(event, (...args) => receive(event, args));
+}
+hub.onreconnecting(() => connectionStatus('Связь потеряна · переподключение…', false));
+hub.onclose(() => connectionStatus('Нет соединения с сервером', false, true));
+hub.onreconnected(id => run(async () => {
+  connectionId = id;
+  // A new SignalR connection has no seat. Do not display the previous hand or
+  // enable actions on the old player's behalf after reconnecting.
+  roomId = null;
+  state = null;
+  $('game').hidden = true;
+  $('lobby').hidden = false;
+  $('messages').replaceChildren();
+  connectionStatus('● Онлайн', true);
   await refresh();
+  error('Соединение восстановлено. Войдите за стол заново.');
+}));
+async function connect() {
+  if (hub.state !== signalR.HubConnectionState.Disconnected) return;
+  connectionStatus('Подключение…', false);
+  if (!['http:', 'https:'].includes(location.protocol)) {
+    connectionStatus('Откройте сайт игры', false);
+    throw new Error('Игра работает через сайт сервера. Откройте https://poker-server-vi5l.onrender.com — локальный HTML-файл не подключён к серверу.');
+  }
+  try {
+    await hub.start();
+  } catch (e) {
+    console.warn('SignalR connection failed', e);
+    connectionStatus('Нет соединения с сервером', false, true);
+    throw new Error('Не удалось подключиться к игре. Сервер может запускаться после простоя. Нажмите «Подключиться снова».');
+  }
+  connectionId = hub.connectionId;
+  roomId = null;
+  state = null;
+  $('game').hidden = true;
+  $('lobby').hidden = false;
+  $('messages').replaceChildren();
+  connectionStatus('● Онлайн', true);
+  await refresh();
+  const id = new URLSearchParams(location.search).get('room');
+  if (id) {
+    const rooms = await invoke('GetRooms');
+    const room = rooms.find(room => room.roomId === id);
+    if (room) {
+      const button = node('button', 'Присоединиться к приглашению');
+      button.onclick = () => run(() => join(id, room.roomName, room.minBet));
+      $('rooms').prepend(button);
+    } else error('Стол из приглашения уже закрыт.');
+  }
 }
 function receive(target,args) {
   if(target==='Connected') connectionId=args[0];
@@ -60,9 +94,10 @@ function renderActions(){const area=$('actions');area.replaceChildren();if(!stat
 }
 $('name').value=localStorage.getItem('river-name')||'';
 $('refresh').onclick=()=>run(refresh);$('leave').onclick=()=>run(leave);
+$('reconnect').onclick=()=>run(connect);
 $('create').onsubmit=e=>{e.preventDefault();run(async()=>{username();const min=Number($('minBet').value);if(!Number.isSafeInteger(min)||min<1||min>100)throw new Error('Ставка должна быть от 1 до 100');const room=await invoke('CreateRoom',$('roomName').value.trim(),Number($('mode').value),min,false);if(!room)throw new Error('Не удалось создать стол');await join(room.roomId,room.roomName,room.minBet);});};
 $('invite').onclick=()=>run(async()=>{await navigator.clipboard.writeText(location.href);$('hint').textContent='Приглашение скопировано. Отправьте ссылку друзьям.';});
 $('chat').onsubmit=e=>{e.preventDefault();run(async()=>{await invoke('SendChatMessage',roomId,$('message').value);$('message').value='';});};
-setInterval(()=>{if(connected)socket.send('{"type":6}\x1e');if(state?.turnStartTime&&state.phase===3){const remaining=Math.max(0,state.turnTimeoutSeconds-Math.floor((Date.now()-Date.parse(state.turnStartTime))/1000));$('timer').textContent=`На ход: ${remaining} сек.`;}else $('timer').textContent='';},5000);
+setInterval(()=>{if(state?.turnStartTime&&state.phase===3){const remaining=Math.max(0,state.turnTimeoutSeconds-Math.floor((Date.now()-Date.parse(state.turnStartTime))/1000));$('timer').textContent=`На ход: ${remaining} сек.`;}else $('timer').textContent='';},1000);
 setInterval(()=>{if(connected&&!roomId)run(refresh);},15000);
-run(async()=>{await connect();const id=new URLSearchParams(location.search).get('room');if(id){$('hint').textContent='';const rooms=await invoke('GetRooms');const r=rooms.find(r=>r.roomId===id);if(r){const b=node('button','Присоединиться к приглашению');b.onclick=()=>run(()=>join(id,r.roomName,r.minBet));$('rooms').prepend(b);}else error('Стол из приглашения уже закрыт.');}});
+run(connect);

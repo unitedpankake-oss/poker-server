@@ -1,5 +1,6 @@
 using PokerServer.Hubs;
 using PokerServer.Services;
+using PokerServer;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -22,8 +23,15 @@ builder.Services.AddCors(options =>
 var app = builder.Build();
 
 app.UseCors();
-app.UseDefaultFiles();
 app.UseStaticFiles();
+
+var webClient = WebClientPage.Load();
+app.MapGet("/", (HttpContext context) =>
+{
+    context.Response.Headers.CacheControl = "no-store";
+    return Results.Content(webClient, "text/html; charset=utf-8");
+});
+app.MapGet("/index.html", () => Results.Redirect("/"));
 
 // Map SignalR hub
 app.MapHub<GameHub>("/gamehub");
