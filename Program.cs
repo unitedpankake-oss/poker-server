@@ -22,11 +22,13 @@ builder.Services.AddCors(options =>
 var app = builder.Build();
 
 app.UseCors();
+app.UseDefaultFiles();
+app.UseStaticFiles();
 
 // Map SignalR hub
 app.MapHub<GameHub>("/gamehub");
 
 // Health check endpoint
-app.MapGet("/", () => "Poker Server is running!");
+app.MapGet("/health", () => "Poker Server is running!");
 
 app.Run();
